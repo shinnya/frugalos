@@ -35,6 +35,9 @@ impl RpcServer {
         builder.add_call_handler::<rpc::DeleteObjectByVersionRpc, _>(this.clone());
         builder.add_call_handler::<rpc::DeleteObjectsByRangeRpc, _>(this.clone());
         builder.add_call_handler::<rpc::DeleteObjectsByPrefixRpc, _>(this.clone());
+        builder.add_call_handler::<rpc::RepairObjectRpc, _>(this.clone());
+        builder.add_call_handler::<rpc::DeleteObjectSetFromDeviceRpc, _>(this.clone());
+        builder.add_call_handler::<rpc::InspectPhysicalDeviceRpc, _>(this.clone());
     }
 }
 impl HandleCall<rpc::DeleteObjectRpc> for RpcServer {
@@ -133,6 +136,37 @@ impl HandleCall<rpc::GetLatestVersionRpc> for RpcServer {
             .request(request.bucket_id)
             .latest(request.segment as usize);
         Reply::future(future.map_err(into_rpc_error).then(Ok))
+    }
+}
+
+impl HandleCall<rpc::DeleteObjectSetFromDeviceRpc> for RpcServer {
+    fn handle_call(
+        &self,
+        request: rpc::DeleteObjectSetFromDeviceRequest,
+    ) -> Reply<rpc::DeleteObjectSetFromDeviceRpc> {
+        let daemon = self.daemon.clone();
+        let bucket_id = request.bucket_id;
+        let device_id = request.device_id;
+        let future = self
+            .client
+            .request(bucket_id.clone())
+            .head_by_ids(request.object_ids)
+            .and_then(move |versions| daemon.delete_by_versions(bucket_id, device_id, versions));
+        Reply::future(future.map_err(into_rpc_error).then(Ok))
+    }
+}
+
+impl HandleCall<rpc::RepairObjectRpc> for RpcServer {
+    fn handle_call(&self, request: rpc::ObjectSetRequest) -> Reply<rpc::RepairObjectRpc> {
+        self.daemon.repair_objects(request.object_ids);
+        Reply::done(Ok(()))
+    }
+}
+
+impl HandleCall<rpc::InspectPhysicalDeviceRpc> for RpcServer {
+    fn handle_call(&self, request: rpc::DeviceRequest) -> Reply<rpc::InspectPhysicalDeviceRpc> {
+        let future = self.daemon.inspect_physical_device(request.device_id);
+        Reply::future(future.map_err(|e| track!(into_rpc_error(e))).then(Ok))
     }
 }
 
