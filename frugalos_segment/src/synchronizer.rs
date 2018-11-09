@@ -83,7 +83,7 @@ impl Synchronizer {
         }
     }
     pub fn handle_event(&mut self, event: &Event) {
-        debug!(
+        info!(
             self.logger,
             "New event: {:?} (metadata={}, todo.len={})",
             event,
@@ -346,11 +346,11 @@ impl Future for RepairContent {
         while let Async::Ready(phase) = track!(self.phase.poll().map_err(Error::from))? {
             let next = match phase {
                 Phase3::A(Some(_)) => {
-                    debug!(self.logger, "The object {:?} already exists", self.version);
+                    info!(self.logger, "The object {:?} already exists", self.version);
                     return Ok(Async::Ready(()));
                 }
                 Phase3::A(None) => {
-                    debug!(
+                    info!(
                         self.logger,
                         "The object {:?} does not exist (try repairing)", self.version
                     );

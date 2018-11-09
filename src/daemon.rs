@@ -14,12 +14,15 @@ use frugalos_config;
 use frugalos_raft;
 use futures::{Async, Future, Poll, Stream};
 use libfrugalos;
+use libfrugalos::entity;
+use libfrugalos::entity::device::PhysicalDeviceInspection;
 use num_cpus;
 use prometrics;
 use rustracing::sampler::{PassiveSampler, ProbabilisticSampler, Sampler};
 use rustracing_jaeger;
 use rustracing_jaeger::span::SpanContextState;
 use slog::{self, Drain, Logger};
+use std::collections::BTreeSet;
 use std::mem;
 use std::net::SocketAddr;
 use std::path::Path;
@@ -199,6 +202,8 @@ impl FrugalosDaemon {
             rpc_service: self.rpc_service,
             command_rx: self.command_rx,
             stop_notifications: Vec::new(),
+            delete_tasks: Vec::new(),
+            inspect_device_tasks: Vec::new(),
         };
 
         let monitor = self.executor.handle().spawn_monitor(runner);
@@ -214,6 +219,8 @@ struct DaemonRunner {
     rpc_service: fibers_rpc::client::ClientService,
     command_rx: mpsc::Receiver<DaemonCommand>,
     stop_notifications: Vec<oneshot::Monitored<(), Error>>,
+    delete_tasks: Vec<Box<Future<Item = (), Error = Error> + Send + 'static>>,
+    inspect_device_tasks: Vec<Box<Future<Item = (), Error = Error> + Send + 'static>>,
 }
 impl DaemonRunner {
     fn handle_command(&mut self, command: DaemonCommand) {
@@ -225,6 +232,31 @@ impl DaemonRunner {
             }
             DaemonCommand::TakeSnapshot => {
                 self.service.take_snapshot();
+            }
+            DaemonCommand::RepairObjects(object_ids) => {
+                self.service.repair_objects(object_ids);
+            }
+            DaemonCommand::DeleteObjectsByVersions {
+                reply,
+                bucket,
+                device,
+                versions,
+                ..
+            } => {
+                self.delete_tasks.push(Box::new(
+                    self.service
+                        .delete_objects_from_device(bucket, device, versions)
+                        .map(|_| {
+                            let _ = reply.exit(Ok(()));
+                        }),
+                ));
+            }
+            DaemonCommand::InspectPhysicalDevice { reply, device, .. } => {
+                self.inspect_device_tasks.push(Box::new(
+                    self.service.inspect_physical_device(device).map(|result| {
+                        let _ = reply.exit(Ok(result));
+                    }),
+                ));
             }
         }
     }
@@ -247,6 +279,17 @@ impl Future for DaemonRunner {
         while let Async::Ready(Some(command)) = self.command_rx.poll().expect("Never fails") {
             self.handle_command(command);
         }
+
+        // No sleep because this task is mainly for debugging.
+        if let Some(mut future) = self.delete_tasks.pop() {
+            while future.poll()?.is_not_ready() {}
+        }
+
+        // No sleep because this task is mainly for debugging.
+        if let Some(mut future) = self.inspect_device_tasks.pop() {
+            while future.poll()?.is_not_ready() {}
+        }
+
         Ok(Async::NotReady)
     }
 }
@@ -270,6 +313,44 @@ impl FrugalosDaemonHandle {
         let command = DaemonCommand::TakeSnapshot;
         let _ = self.command_tx.send(command);
     }
+
+    /// Sends a request to repair objects.
+    pub fn repair_objects(&self, object_ids: BTreeSet<entity::object::ObjectId>) {
+        let command = DaemonCommand::RepairObjects(object_ids);
+        let _ = self.command_tx.send(command);
+    }
+
+    /// Sends a request to delete objects by the given `ObjectVersion`s.
+    pub fn delete_by_versions(
+        &self,
+        bucket: entity::bucket::BucketId,
+        device: entity::device::DeviceId,
+        versions: Vec<(entity::object::ObjectVersion, u16)>,
+    ) -> impl Future<Item = (), Error = Error> {
+        let (reply_tx, reply_rx) = oneshot::monitor();
+        let command = DaemonCommand::DeleteObjectsByVersions {
+            reply: reply_tx,
+            bucket,
+            device,
+            versions,
+        };
+        let _ = self.command_tx.send(command);
+        DeleteObjectsByVersions(reply_rx)
+    }
+
+    /// Sends a request to inspect a physical device.
+    pub fn inspect_physical_device(
+        &self,
+        device: entity::device::DeviceId,
+    ) -> impl Future<Item = PhysicalDeviceInspection, Error = Error> {
+        let (reply_tx, reply_rx) = oneshot::monitor();
+        let command = DaemonCommand::InspectPhysicalDevice {
+            reply: reply_tx,
+            device,
+        };
+        let _ = self.command_tx.send(command);
+        InspectPhysicalDevice(reply_rx)
+    }
 }
 
 #[derive(Debug)]
@@ -278,12 +359,55 @@ enum DaemonCommand {
         reply: oneshot::Monitored<(), Error>,
     },
     TakeSnapshot,
+    RepairObjects(BTreeSet<entity::object::ObjectId>),
+    DeleteObjectsByVersions {
+        reply: oneshot::Monitored<(), Error>,
+        bucket: entity::bucket::BucketId,
+        device: entity::device::DeviceId,
+        versions: Vec<(entity::object::ObjectVersion, u16)>,
+    },
+    InspectPhysicalDevice {
+        reply: oneshot::Monitored<PhysicalDeviceInspection, Error>,
+        device: entity::device::DeviceId,
+    },
 }
 
 #[derive(Debug)]
 pub(crate) struct StopDaemon(oneshot::Monitor<(), Error>);
 impl Future for StopDaemon {
     type Item = ();
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        track!(self.0.poll().map_err(|e| e.unwrap_or_else(|| {
+            ErrorKind::Other
+                .cause("Monitoring channel disconnected")
+                .into()
+        })))
+    }
+}
+
+#[derive(Debug)]
+/// TODO document
+pub(crate) struct DeleteObjectsByVersions(oneshot::Monitor<(), Error>);
+impl Future for DeleteObjectsByVersions {
+    type Item = ();
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        track!(self.0.poll().map_err(|e| e.unwrap_or_else(|| {
+            ErrorKind::Other
+                .cause("Monitoring channel disconnected")
+                .into()
+        })))
+    }
+}
+
+#[derive(Debug)]
+/// TODO document
+pub(crate) struct InspectPhysicalDevice(oneshot::Monitor<PhysicalDeviceInspection, Error>);
+impl Future for InspectPhysicalDevice {
+    type Item = PhysicalDeviceInspection;
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
@@ -399,4 +523,108 @@ fn rpc_write_timeout() -> Duration {
     } else {
         Duration::from_secs(5)
     }
+}
+
+/// Repairs objects by the given `ObjectId`s.
+pub fn repair_objects_by_ids(
+    logger: &Logger,
+    rpc_addr: SocketAddr,
+    bucket_id: entity::bucket::BucketId,
+    object_ids: BTreeSet<entity::object::ObjectId>,
+) -> Result<()> {
+    info!(
+        logger,
+        "Starts repairing objects: bucket={:?}, object_ids={:?}", bucket_id, object_ids
+    );
+
+    let mut executor = track!(ThreadPoolExecutor::with_thread_count(1).map_err(Error::from))?;
+    let rpc_service = RpcServiceBuilder::new()
+        .logger(logger.clone())
+        .finish(executor.handle());
+    let rpc_service_handle = rpc_service.handle();
+    executor.spawn(rpc_service.map_err(|e| panic!("{}", e)));
+
+    let client = libfrugalos::client::frugalos::Client::new(rpc_addr, rpc_service_handle);
+    let fiber = executor.spawn_monitor(client.repair_by_ids(bucket_id, object_ids));
+    track!(
+        executor
+            .run_fiber(fiber)
+            .unwrap()
+            .map_err(|e| e.unwrap_or_else(|| panic!("monitoring channel disconnected")))
+    )?;
+
+    info!(logger, "The FrugalOS server has repaired the given ObjectIds.");
+    Ok(())
+}
+
+/// Deletes objects by the given `ObjectId`s.
+pub fn delete_objects_by_ids(
+    logger: &Logger,
+    rpc_addr: SocketAddr,
+    bucket_id: entity::bucket::BucketId,
+    device_id: entity::device::DeviceId,
+    object_ids: BTreeSet<entity::object::ObjectId>,
+) -> Result<()> {
+    info!(
+        logger,
+        "Starts deleting objects: bucket={:?}, device={}, object_ids={:?}",
+        bucket_id,
+        device_id,
+        object_ids
+    );
+
+    let mut executor = track!(ThreadPoolExecutor::with_thread_count(1).map_err(Error::from))?;
+    let rpc_service = RpcServiceBuilder::new()
+        .logger(logger.clone())
+        .finish(executor.handle());
+    let rpc_service_handle = rpc_service.handle();
+    executor.spawn(rpc_service.map_err(|e| panic!("{}", e)));
+
+    let client = libfrugalos::client::frugalos::Client::new(rpc_addr, rpc_service_handle);
+    let fiber = executor
+        .spawn_monitor(client.delete_from_device_by_object_ids(bucket_id, device_id, object_ids));
+    track!(
+        executor
+            .run_fiber(fiber)
+            .unwrap()
+            .map_err(|e| e.unwrap_or_else(|| panic!("monitoring channel disconnected")))
+    )?;
+
+    info!(logger, "The FrugalOS server has deleted the given ObjectIds.");
+    Ok(())
+}
+
+/// Inspects data by the given `DeviceId`s.
+pub fn inspect_physical_device(
+    logger: &Logger,
+    rpc_addr: SocketAddr,
+    device_id: entity::device::DeviceId,
+) -> Result<()> {
+    info!(logger, "Starts inspect the device: device={}", device_id);
+
+    let mut executor = track!(ThreadPoolExecutor::with_thread_count(1).map_err(Error::from))?;
+    let rpc_service = RpcServiceBuilder::new()
+        .logger(logger.clone())
+        .finish(executor.handle());
+    let rpc_service_handle = rpc_service.handle();
+    executor.spawn(rpc_service.map_err(|e| panic!("{}", e)));
+
+    let client = libfrugalos::client::frugalos::Client::new(rpc_addr, rpc_service_handle);
+    let fiber = executor.spawn_monitor(client.inspect_physical_device(device_id));
+    let result = track!(
+        executor
+            .run_fiber(fiber)
+            .unwrap()
+            .map_err(|e| e.unwrap_or_else(|| panic!("monitoring channel disconnected")))
+    )?;
+
+    info!(logger, "ids: {:?}", result.native_ids_in_device);
+    info!(
+        logger,
+        "ids length: {:?}",
+        result.native_ids_in_device.len()
+    );
+    info!(logger, "device_id: {:?}", result.device_id);
+
+    Ok(())
 }
