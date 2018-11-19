@@ -13,7 +13,7 @@ use std::ops::Range;
 
 use self::mds::MdsClient;
 use self::storage::{ErasureCoder, StorageClient};
-use config::ClientConfig;
+use config::{ClientConfig, MdsClientConfig};
 use {Error, ObjectValue};
 
 mod mds;
@@ -33,7 +33,7 @@ impl Client {
         config: ClientConfig,
         ec: Option<ErasureCoder>,
     ) -> Self {
-        let mds = MdsClient::new(logger.clone(), rpc_service.clone(), config.cluster.clone());
+        let mds = MdsClient::new(logger.clone(), config.mds, rpc_service.clone(), config.cluster.clone());
         let storage = StorageClient::new(logger, config, rpc_service, ec);
         Client { mds, storage }
     }

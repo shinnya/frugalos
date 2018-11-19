@@ -2,6 +2,7 @@
 use byteorder::{BigEndian, ByteOrder};
 use cannyls::lump::LumpId;
 use frugalos_raft::NodeId;
+use libfrugalos::time::Seconds;
 use libfrugalos::entity::object::ObjectVersion;
 use raftlog::cluster::ClusterMembers;
 use siphasher::sip::SipHasher;
@@ -44,6 +45,7 @@ pub(crate) fn make_lump_id(node: &NodeId, version: ObjectVersion) -> LumpId {
 pub struct ClientConfig {
     pub cluster: ClusterConfig,
     pub storage: Storage,
+    pub mds: MdsClientConfig,
 }
 impl ClientConfig {
     /// 対象のセグメントに属しているメンバ一覧を返す。
@@ -53,6 +55,21 @@ impl ClientConfig {
             .iter()
             .map(|m| m.node.to_raft_node_id())
             .collect()
+    }
+}
+
+/// Configuration for `MdsClient`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MdsClientConfig {
+    /// The default timeout(seconds) of `put`.
+    default_put_content_timeout: Seconds,
+}
+
+impl Default for MdsClientConfig {
+    fn default() -> MdsClientConfig {
+        MdsClientConfig {
+            default_put_content_timeout: Seconds(60),
+        }
     }
 }
 

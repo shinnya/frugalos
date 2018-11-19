@@ -25,6 +25,7 @@ message MetadataBucket {
   // デフォルト値: `物理デバイス数 * 5 / (tolerable_faults * 2 + 1)`
   uint32 segment_count = 4;
   uint32 tolerable_faults = 5;
+  uint32 default_put_content_timeout = 6;
 }
 
 message ReplicatedBucket {
@@ -36,6 +37,7 @@ message ReplicatedBucket {
   // デフォルト値: `物理デバイス数 * 10 / (tolerable_faults * 2 + 1)`
   uint32 segment_count = 4;
   uint32 tolerable_faults = 5;
+  uint32 default_put_content_timeout = 6;
 }
 
 message DispersedBucket {
@@ -50,6 +52,8 @@ message DispersedBucket {
 
   // 固有フィールド群
   uint32 data_fragment_count = 6;
+
+  uint32 default_put_content_timeout = 7;
 }
 
 //

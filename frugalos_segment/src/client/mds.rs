@@ -18,21 +18,23 @@ use std::ops::Range;
 use std::sync::{Arc, Mutex};
 use trackable::error::ErrorKindExt;
 
-use config::ClusterConfig;
+use config::{ClusterConfig, MdsClientConfig};
 use {Error, ErrorKind, ObjectValue, Result};
 
 #[derive(Debug, Clone)]
 pub struct MdsClient {
     logger: Logger,
+    config: MdsClientConfig,
     rpc_service: RpcServiceHandle,
     inner: Arc<Mutex<Inner>>,
 }
 impl MdsClient {
-    pub fn new(logger: Logger, rpc_service: RpcServiceHandle, config: ClusterConfig) -> Self {
+    pub fn new(logger: Logger, config: MdsClientConfig, rpc_service: RpcServiceHandle, config: ClusterConfig) -> Self {
         // TODO: 以下のassertionは復活させたい
         // assert!(!config.members.is_empty());
         MdsClient {
             logger,
+            config,
             rpc_service,
             inner: Arc::new(Mutex::new(Inner::new(config))),
         }

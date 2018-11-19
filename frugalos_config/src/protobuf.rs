@@ -4,8 +4,9 @@ use libfrugalos::entity::device::{
     Device, FileDevice, MemoryDevice, SegmentAllocationPolicy, VirtualDevice, Weight,
 };
 use libfrugalos::entity::server::Server;
+use libfrugalos::time::Seconds;
 use protobuf_codec::field::branch::{Branch2, Branch3, Branch6};
-use protobuf_codec::field::num::{F1, F2, F3, F4, F5, F6};
+use protobuf_codec::field::num::{F1, F2, F3, F4, F5, F6, F7};
 use protobuf_codec::message::{MessageDecode, MessageEncode};
 use protobuf_codec::scalar::{
     DoubleDecoder, DoubleEncoder, StringDecoder, StringEncoder, Uint32Decoder, Uint32Encoder,
@@ -14,6 +15,20 @@ use protobuf_codec::scalar::{
 use trackable::error::ErrorKindExt;
 
 use machine::{Command, DeviceGroup, NextSeqNo, Segment, SegmentTable, Snapshot};
+
+fn seconds_decoder() -> impl MessageDecode<Item = Seconds> {
+    let base = protobuf_message_decoder![
+        (F1, Uint64Decoder::new())
+    ];
+    base.map(|x| Seconds(x))
+}
+
+fn seconds_encoder() -> impl SizedEncode<Item = Seconds> + MessageEncode<Item = Seconds> {
+    let base = protobuf_message_encoder![
+        (F1, Uint64Encoder::new())
+    ];
+    base.map_from(|x: Seconds| (x.0))
+}
 
 //
 // https://github.com/frugalos/frugalos/blob/master/frugalos_config/schema/config.proto
@@ -52,7 +67,8 @@ pub fn metadata_bucket_decoder() -> impl MessageDecode<Item = MetadataBucket> {
         (F2, Uint32Decoder::new()),
         (F3, StringDecoder::new()),
         (F4, Uint32Decoder::new()),
-        (F5, Uint32Decoder::new())
+        (F5, Uint32Decoder::new()),
+        (F6, seconds_decoder())
     ];
     base.map(|x| MetadataBucket {
         id: x.0,
@@ -60,6 +76,7 @@ pub fn metadata_bucket_decoder() -> impl MessageDecode<Item = MetadataBucket> {
         device: x.2,
         segment_count: x.3,
         tolerable_faults: x.4,
+        default_put_content_timeout: x.5,
     })
 }
 
@@ -70,10 +87,11 @@ pub fn metadata_bucket_encoder(
         (F2, Uint32Encoder::new()),
         (F3, StringEncoder::new()),
         (F4, Uint32Encoder::new()),
-        (F5, Uint32Encoder::new())
+        (F5, Uint32Encoder::new()),
+        (F6, seconds_encoder())
     ];
     base.map_from(|x: MetadataBucket| {
-        (x.id, x.seqno, x.device, x.segment_count, x.tolerable_faults)
+        (x.id, x.seqno, x.device, x.segment_count, x.tolerable_faults, x.default_put_content_timeout)
     })
 }
 
@@ -83,7 +101,8 @@ pub fn replicated_bucket_decoder() -> impl MessageDecode<Item = ReplicatedBucket
         (F2, Uint32Decoder::new()),
         (F3, StringDecoder::new()),
         (F4, Uint32Decoder::new()),
-        (F5, Uint32Decoder::new())
+        (F5, Uint32Decoder::new()),
+        (F6, seconds_decoder())
     ];
     base.map(|x| ReplicatedBucket {
         id: x.0,
@@ -91,6 +110,7 @@ pub fn replicated_bucket_decoder() -> impl MessageDecode<Item = ReplicatedBucket
         device: x.2,
         segment_count: x.3,
         tolerable_faults: x.4,
+        default_put_content_timeout: x.5,
     })
 }
 
@@ -101,10 +121,11 @@ pub fn replicated_bucket_encoder(
         (F2, Uint32Encoder::new()),
         (F3, StringEncoder::new()),
         (F4, Uint32Encoder::new()),
-        (F5, Uint32Encoder::new())
+        (F5, Uint32Encoder::new()),
+        (F6, seconds_encoder()())
     ];
     base.map_from(|x: ReplicatedBucket| {
-        (x.id, x.seqno, x.device, x.segment_count, x.tolerable_faults)
+        (x.id, x.seqno, x.device, x.segment_count, x.tolerable_faults, x.default_put_content_timeout)
     })
 }
 
@@ -115,7 +136,8 @@ pub fn dispersed_bucket_decoder() -> impl MessageDecode<Item = DispersedBucket> 
         (F3, StringDecoder::new()),
         (F4, Uint32Decoder::new()),
         (F5, Uint32Decoder::new()),
-        (F6, Uint32Decoder::new())
+        (F6, Uint32Decoder::new()),
+        (F7, seconds_decoder())
     ];
     base.map(|x| DispersedBucket {
         id: x.0,
@@ -124,6 +146,7 @@ pub fn dispersed_bucket_decoder() -> impl MessageDecode<Item = DispersedBucket> 
         segment_count: x.3,
         tolerable_faults: x.4,
         data_fragment_count: x.5,
+        default_put_content_timeout: x.6,
     })
 }
 
@@ -135,7 +158,8 @@ pub fn dispersed_bucket_encoder(
         (F3, StringEncoder::new()),
         (F4, Uint32Encoder::new()),
         (F5, Uint32Encoder::new()),
-        (F6, Uint32Encoder::new())
+        (F6, Uint32Encoder::new()),
+        (F7, seconds_encoder())
     ];
     base.map_from(|x: DispersedBucket| {
         (
@@ -145,6 +169,7 @@ pub fn dispersed_bucket_encoder(
             x.segment_count,
             x.tolerable_faults,
             x.data_fragment_count,
+            x.default_put_content_timeout,
         )
     })
 }
