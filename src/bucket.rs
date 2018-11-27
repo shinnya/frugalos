@@ -15,6 +15,7 @@ pub struct Bucket {
     rpc_service: RpcServiceHandle,
     ec: Option<ErasureCoder>,
     storage_config: frugalos_segment::config::Storage,
+    mds_config: frugalos_segment::config::MdsClientConfig,
     segments: Vec<Segment>,
 }
 impl Bucket {
