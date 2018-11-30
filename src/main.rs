@@ -1,6 +1,7 @@
 extern crate clap;
 extern crate frugalos;
 extern crate frugalos_config;
+extern crate frugalos_segment;
 extern crate hostname;
 extern crate libfrugalos;
 #[macro_use]
@@ -11,10 +12,14 @@ extern crate trackable;
 
 use clap::{App, Arg, ArgMatches, SubCommand};
 use libfrugalos::entity::server::Server;
+use libfrugalos::time::Seconds;
 use sloggers::Build;
 use std::env;
 use std::net::{SocketAddr, ToSocketAddrs};
 use trackable::error::Failure;
+
+use frugalos::{Error, Result};
+use frugalos_segment::config::MdsClientConfig;
 
 #[cfg_attr(feature = "cargo-clippy", allow(cyclomatic_complexity))]
 fn main() {
@@ -78,6 +83,8 @@ fn main() {
                 .long("max_concurrent_logs")
                 .takes_value(true)
                 .default_value("4096"),
+        ).arg(
+            put_content_timeout_arg()
         ).get_matches();
 
     // Logger
@@ -175,6 +182,7 @@ fn main() {
             matches.value_of("SAMPLING_RATE").unwrap().parse()
         ));
         daemon.sampling_rate = sampling_rate;
+        daemon.mds_client_config = track_try_unwrap!(track_any_err!(get_mds_client_config(&matches)));
 
         if let Some(threads) = matches.value_of("EXECUTOR_THREADS") {
             let threads: usize = track_try_unwrap!(track_any_err!(threads.parse()));
@@ -248,6 +256,15 @@ fn data_dir_arg<'a, 'b>() -> Arg<'a, 'b> {
         .takes_value(true)
 }
 
+fn put_content_timeout_arg<'a, 'b>() -> Arg<'a, 'b> {
+    Arg::with_name("PUT_CONTENT_TIMEOUT")
+        .help(
+            "Sets the default timeout of putting a content."
+        ).long("put-content-timeout")
+        .takes_value(true)
+        .default_value("60")
+}
+
 fn get_data_dir(matches: &ArgMatches) -> String {
     if let Some(value) = matches
         .value_of("DATA_DIR")
@@ -261,4 +278,11 @@ fn get_data_dir(matches: &ArgMatches) -> String {
         );
         std::process::exit(1);
     }
+}
+
+fn get_mds_client_config(matches: &ArgMatches) -> Result<MdsClientConfig> {
+    let mut config = MdsClientConfig::default();
+    config.default_put_content_timeout = matches.value_of("PUT_CONTENT_TIMEOUT")
+        .map_or_else(|| Ok(config.default_put_content_timeout.clone()), |v| v.parse::<u64>().map(Seconds).map_err(|e| track!(Error::from(e))))?;
+    Ok(config)
 }
