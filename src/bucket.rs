@@ -1,8 +1,8 @@
 #![cfg_attr(feature = "cargo-clippy", allow(ptr_arg))]
 use fibers_rpc::client::ClientServiceHandle as RpcServiceHandle;
 use frugalos_segment::config::ClusterMember;
-use frugalos_segment::Client as Segment;
 use frugalos_segment::config::MdsClientConfig;
+use frugalos_segment::Client as Segment;
 use frugalos_segment::{self, ErasureCoder};
 use libfrugalos::entity::bucket::Bucket as BucketConfig;
 use libfrugalos::entity::object::ObjectId;
@@ -20,7 +20,12 @@ pub struct Bucket {
     segments: Vec<Segment>,
 }
 impl Bucket {
-    pub fn new(logger: Logger, rpc_service: RpcServiceHandle, config: &BucketConfig, mds_client_config: MdsClientConfig) -> Self {
+    pub fn new(
+        logger: Logger,
+        rpc_service: RpcServiceHandle,
+        config: &BucketConfig,
+        mds_client_config: MdsClientConfig,
+    ) -> Self {
         let ec = match config {
             BucketConfig::Metadata(_) => None,
             BucketConfig::Replicated(_) => None,

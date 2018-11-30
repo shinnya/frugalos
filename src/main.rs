@@ -83,9 +83,8 @@ fn main() {
                 .long("max_concurrent_logs")
                 .takes_value(true)
                 .default_value("4096"),
-        ).arg(
-            put_content_timeout_arg()
-        ).get_matches();
+        ).arg(put_content_timeout_arg())
+        .get_matches();
 
     // Logger
     let loglevel = match matches.value_of("LOGLEVEL").unwrap() {
@@ -182,7 +181,8 @@ fn main() {
             matches.value_of("SAMPLING_RATE").unwrap().parse()
         ));
         daemon.sampling_rate = sampling_rate;
-        daemon.mds_client_config = track_try_unwrap!(track_any_err!(get_mds_client_config(&matches)));
+        daemon.mds_client_config =
+            track_try_unwrap!(track_any_err!(get_mds_client_config(&matches)));
 
         if let Some(threads) = matches.value_of("EXECUTOR_THREADS") {
             let threads: usize = track_try_unwrap!(track_any_err!(threads.parse()));
@@ -258,9 +258,8 @@ fn data_dir_arg<'a, 'b>() -> Arg<'a, 'b> {
 
 fn put_content_timeout_arg<'a, 'b>() -> Arg<'a, 'b> {
     Arg::with_name("PUT_CONTENT_TIMEOUT")
-        .help(
-            "Sets the default timeout of putting a content."
-        ).long("put-content-timeout")
+        .help("Sets the default timeout of putting a content.")
+        .long("put-content-timeout")
         .takes_value(true)
         .default_value("60")
 }
@@ -282,7 +281,13 @@ fn get_data_dir(matches: &ArgMatches) -> String {
 
 fn get_mds_client_config(matches: &ArgMatches) -> Result<MdsClientConfig> {
     let mut config = MdsClientConfig::default();
-    config.default_put_content_timeout = matches.value_of("PUT_CONTENT_TIMEOUT")
-        .map_or_else(|| Ok(config.default_put_content_timeout.clone()), |v| v.parse::<u64>().map(Seconds).map_err(|e| track!(Error::from(e))))?;
+    config.default_put_content_timeout = matches.value_of("PUT_CONTENT_TIMEOUT").map_or_else(
+        || Ok(config.default_put_content_timeout.clone()),
+        |v| {
+            v.parse::<u64>()
+                .map(Seconds)
+                .map_err(|e| track!(Error::from(e)))
+        },
+    )?;
     Ok(config)
 }
