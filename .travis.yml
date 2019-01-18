@@ -30,6 +30,7 @@ jobs:
   include:
   - stage: deploy-to-github
     if: tag =~ ^[0-9]\.[0-9].*$
+    rust: 1.31.1
     env:
     - FRUGALOS_IMAGE_NAME=frugalos-$TRAVIS_BUILD_ID-$TRAVIS_BUILD_NUMBER
     - FRUGALOS_EXECUTABLE=$TRAVIS_BUILD_DIR/frugalos-$TRAVIS_TAG.linux-amd64
