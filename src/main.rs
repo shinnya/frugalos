@@ -157,6 +157,8 @@ fn main() {
             track_try_unwrap!(server_addr.parse().map_err(Failure::from_error)),
         );
         track_try_unwrap!(frugalos_config::cluster::create(&logger, server, data_dir));
+        // NOTE: ログ出力(非同期)用に少し待機
+        std::thread::sleep(std::time::Duration::from_millis(100));
     } else if let Some(matches) = matches.subcommand_matches("join") {
         // JOIN CLUSTER
         let server_id = matches

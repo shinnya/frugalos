@@ -59,6 +59,15 @@ impl From<libfrugalos::Error> for Error {
         kind.takes_over(f).into()
     }
 }
+impl From<fibers_rpc::Error> for Error {
+    fn from(f: fibers_rpc::Error) -> Self {
+        let kind = match *f.kind() {
+            fibers_rpc::ErrorKind::InvalidInput => ErrorKind::InvalidInput,
+            _ => ErrorKind::Other,
+        };
+        kind.takes_over(f).into()
+    }
+}
 
 pub fn to_rpc_error(e: Error) -> libfrugalos::Error {
     let kind = match *e.kind() {

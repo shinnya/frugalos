@@ -131,15 +131,17 @@ pub fn create<P: AsRef<Path>>(logger: &Logger, mut local: Server, data_dir: P) -
     local.seqno = 0;
     let node = server_to_frugalos_raft_node(&local);
 
-    let mut executor = track!(ThreadPoolExecutor::new().map_err(Error::from))?;
+    let mut executor = ThreadPoolExecutor::new().map_err(Error::from)?;
 
     let rpc_service = RpcServiceBuilder::new()
         .logger(logger.clone())
         .finish(executor.handle());
 
     let mut rpc_server_builder = RpcServerBuilder::new(node.addr);
+    rpc_server_builder.logger(logger.clone());
     let raft_service = frugalos_raft::Service::new(logger.clone(), &mut rpc_server_builder);
     let rpc_server = rpc_server_builder.finish(executor.handle());
+    let rpc_server_handle = rpc_server.handle();
 
     let (device, rlog) = track!(make_rlog(
         logger.clone(),
@@ -150,12 +152,17 @@ pub fn create<P: AsRef<Path>>(logger: &Logger, mut local: Server, data_dir: P) -
         raft_service.handle(),
         vec![local.clone()],
     ))?;
-    executor.spawn(rpc_server.map_err(move |e| panic!("Error: {}", e)));
-    executor.spawn(raft_service.map_err(move |e| panic!("Error: {}", e)));
-    executor.spawn(rpc_service.map_err(move |e| panic!("Error: {}", e)));
+    executor.spawn(rpc_server.map_err(move |e| panic!("Error rpc server: {}", e)));
+    executor.spawn(raft_service.map_err(move |e| panic!("Error raft: {}", e)));
+    executor.spawn(rpc_service.map_err(move |e| panic!("Error rpc_service: {}", e)));
 
     // クラスタ構成に自サーバを登録
     let monitor = executor.spawn_monitor(CreateCluster::new(logger.clone(), rlog, local.clone()));
+    let result = track!(executor.run_fiber(monitor).map_err(Error::from))?;
+    track!(result.map_err(Error::from))?;
+
+    // RPC サーバーを停止
+    let monitor = executor.spawn_monitor(rpc_server_handle.shutdown(Duration::from_millis(100)));
     let result = track!(executor.run_fiber(monitor).map_err(Error::from))?;
     track!(result.map_err(Error::from))?;
 
