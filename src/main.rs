@@ -2,6 +2,7 @@ extern crate clap;
 extern crate fibers_rpc;
 extern crate frugalos;
 extern crate frugalos_config;
+extern crate frugalos_mds;
 extern crate frugalos_segment;
 extern crate hostname;
 extern crate jemallocator;
@@ -22,6 +23,7 @@ use std::time::Duration;
 use trackable::error::Failure;
 
 use frugalos::{Error, Result};
+use frugalos_mds::MdsNodeConfig;
 use frugalos_segment::config::MdsClientConfig;
 
 #[global_allocator]
@@ -262,6 +264,8 @@ fn main() {
             track_try_unwrap!(get_rpc_client_channel_options(&matches));
         daemon.mds_client_config =
             track_try_unwrap!(track_any_err!(get_mds_client_config(&matches)));
+        daemon.mds_node_config =
+            track_try_unwrap!(track_any_err!(get_mds_node_config(&matches)));
 
         if let Some(threads) = matches.value_of("EXECUTOR_THREADS") {
             let threads: usize = track_try_unwrap!(track_any_err!(threads.parse()));
@@ -394,6 +398,54 @@ fn get_mds_client_config(matches: &ArgMatches) -> Result<MdsClientConfig> {
             v.parse::<u64>()
                 .map(Seconds)
                 .map_err(|e| track!(Error::from(e)))
+        },
+    )?;
+    Ok(config)
+}
+
+/// Gets `MdsNodeConfig` from CLI arguments.
+fn get_mds_node_config(matches: &ArgMatches) -> Result<MdsNodeConfig> {
+    let mut config = MdsNodeConfig::default();
+    config.commit_timeout = matches.value_of("MDS_COMMIT_TIMEOUT_MILLIS").map_or_else(
+        || Ok(config.commit_timeout),
+        |v| {
+            v.parse::<u64>().map(Duration::from_millis).map_err(|e| track!(Error::from(e)))
+        },
+    )?;
+    config.large_queue_threshold = matches.value_of("MDS_LARGE_QUEUE_THRESHOLD").map_or_else(
+        || Ok(config.large_queue_threshold),
+        |v| {
+            v.parse::<usize>().map_err(|e| track!(Error::from(e)))
+        },
+    )?;
+    config.leader_waitings_threshold = matches.value_of("MDS_LEADER_WAITINGS_THRESHOLD").map_or_else(
+        || Ok(config.leader_waitings_threshold),
+        |v| {
+            v.parse::<usize>().map_err(|e| track!(Error::from(e)))
+        },
+    )?;
+    config.leader_waitings_timeout = matches.value_of("MDS_LEADER_WAITINGS_TIMEOUT_MILLIS").map_or_else(
+        || Ok(config.leader_waitings_timeout),
+        |v| {
+            v.parse::<u64>().map(Duration::from_millis).map_err(|e| track!(Error::from(e)))
+        },
+    )?;
+    config.polling_interval = matches.value_of("MDS_POLLING_INTERVAL").map_or_else(
+        || Ok(config.polling_interval),
+        |v| {
+            v.parse::<u64>().map(Duration::from_millis).map_err(|e| track!(Error::from(e)))
+        },
+    )?;
+    config.reelection_threshold = matches.value_of("MDS_REELECTION_THRESHOLD").map_or_else(
+        || Ok(config.reelection_threshold),
+        |v| {
+            v.parse::<usize>().map_err(|e| track!(Error::from(e)))
+        },
+    )?;
+    config.snapshot_threshold = matches.value_of("MDS_SNAPSHOT_THRESHOLD").map_or_else(
+        || Ok(config.snapshot_threshold),
+        |v| {
+            v.parse::<usize>().map_err(|e| track!(Error::from(e)))
         },
     )?;
     Ok(config)

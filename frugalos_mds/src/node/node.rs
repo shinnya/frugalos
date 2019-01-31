@@ -34,19 +34,19 @@ type RaftEvent = raftlog::Event;
 #[derive(Debug, Clone, Copy)]
 pub struct MdsNodeConfig {
     /// TODO
-    commit_timeout: Duration,
+    pub commit_timeout: Duration,
     /// TODO
-    large_queue_threshold: usize,
+    pub large_queue_threshold: usize,
     /// TODO
-    leader_waitings_threshold: usize,
+    pub leader_waitings_threshold: usize,
     /// TODO
-    leader_waitings_timeout: Duration,
+    pub leader_waitings_timeout: Duration,
     /// TODO
-    polling_interval: Duration,
+    pub polling_interval: Duration,
     /// TODO
-    reelection_threshold: usize,
+    pub reelection_threshold: usize,
     /// TODO
-    snapshot_threshold: usize,
+    pub snapshot_threshold: usize,
 }
 
 impl Default for MdsNodeConfig {
