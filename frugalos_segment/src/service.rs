@@ -5,7 +5,7 @@ use fibers::sync::mpsc;
 use fibers::Spawn;
 use fibers_rpc::client::ClientServiceHandle as RpcServiceHandle;
 use fibers_rpc::server::ServerBuilder as RpcServerBuilder;
-use frugalos_mds::{Node, Service as RaftMdsService, ServiceHandle as MdsHandle};
+use frugalos_mds::{MdsNodeConfig, Node, Service as RaftMdsService, ServiceHandle as MdsHandle};
 use frugalos_raft::{self, NodeId};
 use futures::{Async, Future, Poll, Stream};
 use raftlog::cluster::ClusterMembers;
@@ -30,6 +30,7 @@ pub struct Service<S> {
     command_rx: mpsc::Receiver<Command>,
     raft_metrics: frugalos_raft::RpcMetrics,
     mds_alive: bool,
+    node_config: MdsNodeConfig,
 }
 impl<S> Service<S>
 where
@@ -42,6 +43,7 @@ where
         rpc_service: RpcServiceHandle,
         rpc: &mut RpcServerBuilder,
         raft_service: frugalos_raft::ServiceHandle,
+        node_config: MdsNodeConfig,
     ) -> Result<Self> {
         let mds_service = track!(RaftMdsService::new(logger.clone(), rpc))?;
         let device_registry = DeviceRegistry::new(logger.clone());
@@ -59,6 +61,7 @@ where
             command_rx,
             raft_metrics: frugalos_raft::RpcMetrics::new(),
             mds_alive: true,
+            node_config,
         })
     }
 
@@ -105,6 +108,7 @@ where
                 let raft_service = self.raft_service.clone();
                 let raft_metrics = self.raft_metrics.clone();
                 let mds_service = self.mds_service.handle();
+                let node_config = self.node_config.clone();
                 let future = device
                     .map_err(|e| track!(e))
                     .and_then(move |device| {
@@ -119,6 +123,7 @@ where
                             device,
                             client,
                             cluster,
+                            node_config
                         ))
                     })
                     .map_err(move |e| crit!(logger, "Error: {}", e))
@@ -209,6 +214,7 @@ impl SegmentNode {
         device: DeviceHandle,
         client: StorageClient,
         cluster: ClusterMembers,
+        node_config: MdsNodeConfig,
     ) -> Result<Self>
     where
         S: Clone + Spawn + Send + 'static,
@@ -243,7 +249,8 @@ impl SegmentNode {
             node_id,
             cluster,
             io,
-            rpc_service
+            rpc_service,
+            node_config,
         ))?;
 
         // TODO: optionにする

@@ -32,7 +32,7 @@ extern crate slog;
 extern crate trackable;
 
 pub use error::{Error, ErrorKind};
-pub use node::{Event, Node};
+pub use node::{Event, MdsNodeConfig, Node};
 pub use service::{Service, ServiceHandle};
 
 mod codec;

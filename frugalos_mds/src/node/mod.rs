@@ -13,6 +13,7 @@ use {Error, ErrorKind};
 
 pub use self::handle::NodeHandle;
 pub use self::node::Node;
+pub use self::node::MdsNodeConfig;
 
 mod handle;
 mod node;

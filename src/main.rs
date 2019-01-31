@@ -80,6 +80,54 @@ fn main() {
                         .takes_value(true)
                         .default_value("5000"),
                 )
+                .arg(
+                    Arg::with_name("MDS_COMMIT_TIMEOUT_MILLIS")
+                        .long("mds-commit-timeout-millis")
+                        .takes_value(true)
+                        .default_value("0"),
+                )
+                .arg(
+                    Arg::with_name("MDS_LARGE_QUEUE_THRESHOLD")
+                        .long("mds-large-queue-threshold")
+                        .takes_value(true)
+                        .default_value("0"),
+                )
+                .arg(
+                    Arg::with_name("MDS_LEADER_WAITINGS_THRESHOLD")
+                        .long("mds-leader-waitings-threshold")
+                        .takes_value(true)
+                        .default_value("0"),
+                )
+                .arg(
+                    Arg::with_name("MDS_LEADER_WAITINGS_TIMEOUT_MILLIS")
+                        .long("mds-leader-waitings-timeout-millis")
+                        .takes_value(true)
+                        .default_value("0"),
+                )
+                .arg(
+                    Arg::with_name("MDS_POLLING_INTERVAL")
+                        .long("mds-polling-interval")
+                        .takes_value(true)
+                        .default_value("0"),
+                )
+                .arg(
+                    Arg::with_name("MDS_REELECTION_THRESHOLD")
+                        .long("mds-reelection-threshold")
+                        .takes_value(true)
+                        .default_value("0"),
+                )
+                .arg(
+                    Arg::with_name("MDS_REELECTION_THRESHOLD")
+                        .long("mds-reelection-threshold")
+                        .takes_value(true)
+                        .default_value("0"),
+                )
+                .arg(
+                    Arg::with_name("MDS_SNAPSHOT_THRESHOLD")
+                        .long("mds-snapshot-threshold")
+                        .takes_value(true)
+                        .default_value("0"),
+                )
                 .arg(data_dir_arg())
                 .arg(put_content_timeout_arg()),
         )

@@ -11,6 +11,7 @@ use fibers_rpc::channel::ChannelOptions;
 use fibers_rpc::client::{ClientService as RpcService, ClientServiceBuilder as RpcServiceBuilder};
 use fibers_rpc::server::ServerBuilder as RpcServerBuilder;
 use frugalos_config;
+use frugalos_mds;
 use frugalos_raft;
 use futures::{Async, Future, Poll, Stream};
 use libfrugalos;
@@ -48,6 +49,9 @@ pub struct FrugalosDaemonBuilder {
 
     /// `MdsClient` に与える Configuration。
     pub mds_client_config: frugalos_segment::config::MdsClientConfig,
+
+    /// `Node` に与える Configuration。
+    pub mds_node_config: frugalos_mds::MdsNodeConfig,
 }
 impl FrugalosDaemonBuilder {
     /// 新しい`FrugalosDaemonBuilder`インスタンスを生成する。
@@ -58,6 +62,7 @@ impl FrugalosDaemonBuilder {
             sampling_rate: 0.001,
             rpc_client_channel_options: Default::default(),
             mds_client_config: Default::default(),
+            mds_node_config: Default::default(),
         }
     }
 
@@ -125,6 +130,7 @@ impl FrugalosDaemon {
             &mut rpc_server_builder,
             rpc_service.handle(),
             builder.mds_client_config.clone(),
+            builder.mds_node_config.clone(),
         ))?;
 
         let sampler = Sampler::<SpanContextState>::or(

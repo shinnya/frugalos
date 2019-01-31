@@ -30,6 +30,40 @@ const DEFAULT_LARGE_QUEUE_THRESHOLD: usize = 1024;
 
 type RaftEvent = raftlog::Event;
 
+/// Configuration for `Node`.
+#[derive(Debug, Clone, Copy)]
+pub struct MdsNodeConfig {
+    /// TODO
+    commit_timeout: Duration,
+    /// TODO
+    large_queue_threshold: usize,
+    /// TODO
+    leader_waitings_threshold: usize,
+    /// TODO
+    leader_waitings_timeout: Duration,
+    /// TODO
+    polling_interval: Duration,
+    /// TODO
+    reelection_threshold: usize,
+    /// TODO
+    snapshot_threshold: usize,
+}
+
+impl Default for MdsNodeConfig {
+    fn default() -> Self {
+        // TODO
+        Self {
+            commit_timeout: Duration::from_millis(10),
+            leader_waitings_threshold: 1,
+            leader_waitings_timeout: Duration::from_millis(30),
+            large_queue_threshold: 1024,
+            polling_interval: Duration::from_millis(500),
+            reelection_threshold: 10, // 10 * 500ms = 5s
+            snapshot_threshold: 10_000,
+        }
+    }
+}
+
 #[derive(Clone)]
 struct Metrics {
     objects: Gauge,
@@ -111,8 +145,7 @@ pub struct Node {
 
     // リーダが重い場合に再選出を行うための変数群
     large_queue_rounds: usize,
-    large_queue_threshold: usize,
-    reelection_threshold: usize,
+    config: MdsNodeConfig,
     commit_timeout: Option<usize>,
 }
 impl Node {
@@ -124,6 +157,7 @@ impl Node {
         cluster: ClusterMembers,
         io: RaftIo,
         rpc_service: RpcServiceHandle,
+        config: MdsNodeConfig,
     ) -> Result<Self> {
         let (request_tx, request_rx) = mpsc::channel();
         let node_handle = NodeHandle::new(request_tx.clone());
@@ -151,7 +185,6 @@ impl Node {
             reelection_threshold,
             large_queue_threshold
         );
-
         let metrics = track!(Metrics::new(&node_id))?;
         Ok(Node {
             logger,
@@ -172,11 +205,10 @@ impl Node {
             metrics,
             ready_snapshot: None,
             decoding_snapshot: None,
-            polling_timer: timer::timeout(Duration::from_millis(500)),
+            polling_timer: timer::timeout(config.polling_interval),
             phase: Phase::Running,
             large_queue_rounds: 0,
-            large_queue_threshold,
-            reelection_threshold,
+            config,
             commit_timeout: None,
             rpc_service,
         })
@@ -655,9 +687,9 @@ impl Stream for Node {
             self.metrics
                 .proposal_queue_len
                 .set(proposal_queue_len as f64);
-            if proposal_queue_len > self.large_queue_threshold {
+            if proposal_queue_len > self.config.large_queue_threshold {
                 self.large_queue_rounds += 1;
-                if self.large_queue_rounds >= self.reelection_threshold {
+                if self.large_queue_rounds >= self.config.reelection_threshold {
                     warn!(self.logger, "The leader may be slow. Reelection is started");
                     self.start_reelection();
                     self.large_queue_rounds = 0;
