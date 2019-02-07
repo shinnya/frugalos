@@ -3,15 +3,17 @@
 use fibers::executor::ThreadPoolExecutorHandle;
 use fibers::sync::mpsc;
 use fibers::sync::oneshot;
+use fibers::time::timer;
 use fibers::{Executor, Spawn, ThreadPoolExecutor};
 use fibers_http_server::metrics::{MetricsHandler, WithMetrics};
-use fibers_http_server::{Server as HttpServer, ServerBuilder as HttpServerBuilder};
+use fibers_http_server::ServerBuilder as HttpServerBuilder;
 use fibers_rpc;
 use fibers_rpc::channel::ChannelOptions;
 use fibers_rpc::client::{ClientService as RpcService, ClientServiceBuilder as RpcServiceBuilder};
 use fibers_rpc::server::ServerBuilder as RpcServerBuilder;
 use frugalos_config;
 use frugalos_raft;
+use futures::future::Either;
 use futures::{Async, Future, Poll, Stream};
 use libfrugalos;
 use num_cpus;
@@ -24,6 +26,7 @@ use std::mem;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::process::Command;
+use std::time::Duration;
 use trackable::error::ErrorKindExt;
 
 use config_server::ConfigServer;
@@ -32,6 +35,8 @@ use rpc_server::RpcServer;
 use server::{spawn_report_spans_thread, Server};
 use service;
 use {Error, ErrorKind, Result};
+
+type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send + 'static>;
 
 /// デーモンのビルダ。
 pub struct FrugalosDaemonBuilder {
@@ -71,8 +76,23 @@ impl FrugalosDaemonBuilder {
     }
 }
 
+/// A configuration used when frugalos starts.
+pub struct FrugalosRunConfig {
+    /// waiting time when frugalos stops.
+    pub stop_waiting_time: Duration,
+}
+
+impl Default for FrugalosRunConfig {
+    fn default() -> Self {
+        Self {
+            stop_waiting_time: Default::default(),
+        }
+    }
+}
+
 /// Frugalosの各種機能を提供するためのデーモン。
 pub struct FrugalosDaemon {
+    logger: Logger,
     service: service::Service<ThreadPoolExecutorHandle>,
     http_server_builder: HttpServerBuilder,
     rpc_server_builder: RpcServerBuilder,
@@ -153,6 +173,7 @@ impl FrugalosDaemon {
         track!(config_server.register(&mut http_server_builder))?;
 
         Ok(FrugalosDaemon {
+            logger: logger.clone(),
             service,
             http_server_builder,
             rpc_server_builder,
@@ -192,13 +213,17 @@ impl FrugalosDaemon {
     /// 各種サーバを起動して、処理を実行する。
     ///
     /// この呼び出しはブロッキングするので注意。
-    pub fn run(mut self) -> Result<()> {
+    pub fn run(mut self, config: FrugalosRunConfig) -> Result<()> {
         track!(self.register_prometheus_metrics())?;
 
         let runner = DaemonRunner {
             service: self.service,
             rpc_server: self.rpc_server_builder.finish(self.executor.handle()),
-            http_server: self.http_server_builder.finish(self.executor.handle()),
+            http_server: HttpServer::new(
+                self.logger.clone(),
+                self.http_server_builder.finish(self.executor.handle()),
+                config.stop_waiting_time,
+            ),
             rpc_service: self.rpc_service,
             command_rx: self.command_rx,
             stop_notifications: Vec::new(),
@@ -222,7 +247,7 @@ impl DaemonRunner {
     fn handle_command(&mut self, command: DaemonCommand) {
         match command {
             DaemonCommand::StopDaemon { reply } => {
-                // TODO: stop other services and servers
+                self.http_server.stop();
                 self.service.stop();
                 self.stop_notifications.push(reply);
             }
@@ -237,10 +262,10 @@ impl Future for DaemonRunner {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        track!(self.http_server.poll())?;
+        let ready = track!(self.http_server.poll())?.is_ready();
         track!(self.rpc_server.poll())?;
         track!(self.rpc_service.poll())?;
-        let ready = track!(self.service.poll())?.is_ready();
+        let ready = track!(self.service.poll())?.is_ready() && ready;
         if ready {
             for reply in self.stop_notifications.drain(..) {
                 reply.exit(Ok(()));
@@ -296,6 +321,46 @@ impl Future for StopDaemon {
             .map_err(|e| e.unwrap_or_else(|| ErrorKind::Other
                 .cause("Monitoring channel disconnected")
                 .into())))
+    }
+}
+
+struct HttpServer {
+    logger: Logger,
+    /// This variable indicates how long we wait after killing a HTTP server.
+    waiting_time: Duration,
+    /// `HttpServer` or `Timeout`. When `DaemonRunner`receives a stop request, it begins a stop timer and replaces a HTTP server with the timer.
+    /// By this operation, we intentionally drop the HTTP server so that it can deny new requests from clients.
+    /// Waiting for a while after stopping a HTTP server is expected to reduce incomplete client requests caused by HTTP timeout etc.
+    inner: Either<BoxFuture<()>, BoxFuture<()>>,
+}
+
+impl HttpServer {
+    /// Creates a new `HttpServer`.
+    fn new(logger: Logger, server: fibers_http_server::Server, waiting_time: Duration) -> Self {
+        Self {
+            logger,
+            waiting_time,
+            inner: Either::A(Box::new(server.map_err(|e| track!(Error::from(e))))),
+        }
+    }
+
+    /// Stops this `HttpServer`.
+    fn stop(&mut self) {
+        info!(
+            self.logger,
+            "Stops HTTP server and waits for a moment: waiting_time={:?}", self.waiting_time
+        );
+        let timeout = timer::timeout(self.waiting_time).map_err(|e| track!(Error::from(e)));
+        self.inner = Either::B(Box::new(timeout));
+    }
+}
+
+impl Future for HttpServer {
+    type Item = ();
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        track!(self.inner.poll())
     }
 }
 
