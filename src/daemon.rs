@@ -14,7 +14,7 @@ use fibers_rpc::server::ServerBuilder as RpcServerBuilder;
 use frugalos_config;
 use frugalos_raft;
 use futures::future::Either;
-use futures::{Async, Future, Poll, Stream};
+use futures::{Async, Fuse, Future, Poll, Stream, IntoFuture};
 use libfrugalos;
 use num_cpus;
 use prometrics;
@@ -37,6 +37,7 @@ use service;
 use {Error, ErrorKind, Result};
 
 type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send + 'static>;
+type BoxFuse<T> = Box<Fuse<Wrapper<T>>>;
 
 /// デーモンのビルダ。
 pub struct FrugalosDaemonBuilder {
@@ -217,8 +218,13 @@ impl FrugalosDaemon {
         track!(self.register_prometheus_metrics())?;
 
         let runner = DaemonRunner {
+            logger: self.logger.clone(),
             service: self.service,
-            rpc_server: self.rpc_server_builder.finish(self.executor.handle()),
+            rpc_server: RpcServerRunner::new(
+                self.logger.clone(),
+                self.rpc_server_builder.finish(self.executor.handle()),
+                config.stop_waiting_time,
+            ),
             http_server: HttpServer::new(
                 self.logger.clone(),
                 self.http_server_builder.finish(self.executor.handle()),
@@ -236,9 +242,10 @@ impl FrugalosDaemon {
 }
 
 struct DaemonRunner {
+    logger: Logger,
     service: service::Service<ThreadPoolExecutorHandle>,
     http_server: HttpServer,
-    rpc_server: fibers_rpc::server::Server<ThreadPoolExecutorHandle>,
+    rpc_server: RpcServerRunner,
     rpc_service: fibers_rpc::client::ClientService,
     command_rx: mpsc::Receiver<DaemonCommand>,
     stop_notifications: Vec<oneshot::Monitored<(), Error>>,
@@ -247,7 +254,8 @@ impl DaemonRunner {
     fn handle_command(&mut self, command: DaemonCommand) {
         match command {
             DaemonCommand::StopDaemon { reply } => {
-                self.http_server.stop();
+                //self.http_server.stop();
+                self.rpc_server.stop();
                 self.service.stop();
                 self.stop_notifications.push(reply);
             }
@@ -262,14 +270,15 @@ impl Future for DaemonRunner {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        let ready = track!(self.http_server.poll())?.is_ready();
-        track!(self.rpc_server.poll())?;
+        track!(self.http_server.poll())?.is_ready();
+        let ready = track!(self.rpc_server.poll())?.is_ready();
         track!(self.rpc_service.poll())?;
         let ready = track!(self.service.poll())?.is_ready() && ready;
         if ready {
             for reply in self.stop_notifications.drain(..) {
                 reply.exit(Ok(()));
             }
+            info!(self.logger, "DaemonRunner stops");
             return Ok(Async::Ready(()));
         }
         while let Async::Ready(Some(command)) = self.command_rx.poll().expect("Never fails") {
@@ -356,6 +365,60 @@ impl HttpServer {
 }
 
 impl Future for HttpServer {
+    type Item = ();
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        track!(self.inner.poll())
+    }
+}
+
+struct Wrapper<T> {
+    inner: Future<T>
+}
+
+impl<T: Future> Future for Wrapper<T> {
+    type Item = T::Item;
+    type Error = T::Error;
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        self.inner.poll()
+    }
+}
+
+struct RpcServerRunner {
+    logger: Logger,
+    /// This variable indicates how long we wait after killing a HTTP server.
+    waiting_time: Duration,
+    /// `HttpServer` or `Timeout`. When `DaemonRunner`receives a stop request, it begins a stop timer and replaces a HTTP server with the timer.
+    /// By this operation, we intentionally drop the HTTP server so that it can deny new requests from clients.
+    /// Waiting for a while after stopping a HTTP server is expected to reduce incomplete client requests caused by HTTP timeout etc.
+    inner: Either<BoxFuse<()>, BoxFuse<()>>,
+}
+
+impl RpcServerRunner {
+    /// Creates a new `RpcServerRunner`.
+    fn new(logger: Logger, server: fibers_rpc::server::Server<ThreadPoolExecutorHandle>, waiting_time: Duration) -> Self {
+        let wrapper = Wrapper { inner: server.map_err(|e| track!(Error::from(e))).fuse() };
+        Self {
+            logger,
+            waiting_time,
+            inner: Either::A(Box::new(wrapper)),
+        }
+    }
+
+    /// Stops this `HttpServer`.
+    fn stop(&mut self) {
+        info!(
+            self.logger,
+            "Stops RPC server and waits for a moment: waiting_time={:?}", self.waiting_time
+        );
+        let timeout = timer::timeout(self.waiting_time).map_err(|e| track!(Error::from(e)));
+        let wrapper = Wrapper { inner: timeout.fuse() };
+        self.inner = Either::B(Box::new(wrapper));
+    }
+}
+
+impl Future for RpcServerRunner {
     type Item = ();
     type Error = Error;
 
