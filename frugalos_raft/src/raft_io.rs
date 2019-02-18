@@ -16,7 +16,8 @@ pub struct RaftIo {
     node_id: LocalNodeId,
     service: ServiceHandle,
     storage: Storage,
-    mailer: Mailer,
+    mailer: Option<Mailer>,
+    remaining_messages: Vec<Message>,
     timer: Timer,
 }
 impl RaftIo {
@@ -34,9 +35,16 @@ impl RaftIo {
             node_id,
             service,
             storage,
-            mailer,
+            mailer: Some(mailer),
+            remaining_messages: Vec::new(),
             timer,
         })
+    }
+    pub fn shutdown(&mut self) {
+        while let Ok(Some(message)) = self.try_recv_message() {
+            self.remaining_messages.push(message);
+        }
+        self.mailer = None;
     }
 }
 impl Io for RaftIo {
@@ -46,9 +54,13 @@ impl Io for RaftIo {
     type LoadLog = storage::LoadLog;
     type Timeout = Timeout;
     fn try_recv_message(&mut self) -> Result<Option<Message>> {
-        self.mailer
-            .try_recv_message()
-            .map_err(|e| ErrorKind::Other.takes_over(e).into())
+        if let Some(ref mut mailer) = self.mailer {
+            return mailer
+                .try_recv_message()
+                .map_err(|e| ErrorKind::Other.takes_over(e).into());
+        }
+
+        Ok(None)
     }
     fn send_message(&mut self, message: Message) {
         let node = match message.header().destination.as_str().parse() {
@@ -58,7 +70,9 @@ impl Io for RaftIo {
             }
             Ok(id) => id,
         };
-        self.mailer.send_message(&node, message);
+        if let Some(ref mut mailer) = self.mailer {
+            mailer.send_message(&node, message);
+        }
     }
     fn save_ballot(&mut self, ballot: Ballot) -> Self::SaveBallot {
         self.storage.save_ballot(ballot)
