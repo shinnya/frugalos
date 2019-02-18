@@ -14,7 +14,7 @@ use fibers_rpc::server::ServerBuilder as RpcServerBuilder;
 use frugalos_config;
 use frugalos_raft;
 use futures::future::Either;
-use futures::{Async, Fuse, Future, Poll, Stream, IntoFuture};
+use futures::{Async, Future, Poll, Stream};
 use libfrugalos;
 use num_cpus;
 use prometrics;
@@ -37,7 +37,6 @@ use service;
 use {Error, ErrorKind, Result};
 
 type BoxFuture<T> = Box<Future<Item = T, Error = Error> + Send + 'static>;
-type BoxFuse<T> = Box<Fuse<Wrapper<T>>>;
 
 /// デーモンのビルダ。
 pub struct FrugalosDaemonBuilder {
@@ -373,18 +372,6 @@ impl Future for HttpServer {
     }
 }
 
-struct Wrapper<T> {
-    inner: Future<T>
-}
-
-impl<T: Future> Future for Wrapper<T> {
-    type Item = T::Item;
-    type Error = T::Error;
-    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        self.inner.poll()
-    }
-}
-
 struct RpcServerRunner {
     logger: Logger,
     /// This variable indicates how long we wait after killing a HTTP server.
@@ -392,17 +379,16 @@ struct RpcServerRunner {
     /// `HttpServer` or `Timeout`. When `DaemonRunner`receives a stop request, it begins a stop timer and replaces a HTTP server with the timer.
     /// By this operation, we intentionally drop the HTTP server so that it can deny new requests from clients.
     /// Waiting for a while after stopping a HTTP server is expected to reduce incomplete client requests caused by HTTP timeout etc.
-    inner: Either<BoxFuse<()>, BoxFuse<()>>,
+    inner: Either<BoxFuture<()>, BoxFuture<()>>,
 }
 
 impl RpcServerRunner {
     /// Creates a new `RpcServerRunner`.
     fn new(logger: Logger, server: fibers_rpc::server::Server<ThreadPoolExecutorHandle>, waiting_time: Duration) -> Self {
-        let wrapper = Wrapper { inner: server.map_err(|e| track!(Error::from(e))).fuse() };
         Self {
             logger,
             waiting_time,
-            inner: Either::A(Box::new(wrapper)),
+            inner: Either::A(Box::new(server.map_err(|e| track!(Error::from(e))))),
         }
     }
 
@@ -413,8 +399,7 @@ impl RpcServerRunner {
             "Stops RPC server and waits for a moment: waiting_time={:?}", self.waiting_time
         );
         let timeout = timer::timeout(self.waiting_time).map_err(|e| track!(Error::from(e)));
-        let wrapper = Wrapper { inner: timeout.fuse() };
-        self.inner = Either::B(Box::new(wrapper));
+        self.inner = Either::B(Box::new(timeout));
     }
 }
 
