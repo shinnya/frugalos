@@ -253,8 +253,8 @@ impl DaemonRunner {
     fn handle_command(&mut self, command: DaemonCommand) {
         match command {
             DaemonCommand::StopDaemon { reply } => {
-                //self.http_server.stop();
-                self.rpc_server.stop();
+                self.http_server.stop();
+                //self.rpc_server.stop();
                 self.service.stop();
                 self.stop_notifications.push(reply);
             }
@@ -269,8 +269,8 @@ impl Future for DaemonRunner {
     type Error = Error;
 
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        track!(self.http_server.poll())?.is_ready();
-        let ready = track!(self.rpc_server.poll())?.is_ready();
+        let ready = track!(self.http_server.poll())?.is_ready();
+        track!(self.rpc_server.poll())?;
         track!(self.rpc_service.poll())?;
         let ready = track!(self.service.poll())?.is_ready() && ready;
         if ready {
