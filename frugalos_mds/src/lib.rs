@@ -17,6 +17,8 @@ extern crate fibers_global;
 extern crate fibers_rpc;
 extern crate fibers_tasque;
 extern crate futures;
+#[macro_use]
+extern crate frugalos_core;
 extern crate libfrugalos;
 extern crate patricia_tree;
 extern crate prometrics;

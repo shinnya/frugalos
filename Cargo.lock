@@ -321,6 +321,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "frugalos_core"
+version = "0.1.0"
+dependencies = [
+ "trackable 0.2.20 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
 name = "frugalos_mds"
 version = "0.6.1"
 dependencies = [
@@ -332,6 +339,7 @@ dependencies = [
  "fibers_global 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "fibers_rpc 0.2.17 (registry+https://github.com/rust-lang/crates.io-index)",
  "fibers_tasque 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "frugalos_core 0.1.0",
  "frugalos_raft 0.6.0",
  "futures 0.1.25 (registry+https://github.com/rust-lang/crates.io-index)",
  "libfrugalos 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",

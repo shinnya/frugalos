@@ -1,0 +1,15 @@
+[package]
+name = "frugalos_core"
+version = "0.1.0"
+authors = ["The FrugalOS Developers"]
+description = "Provides common functionalities required by all frugalos modules."
+homepage = "https://github.com/frugalos/frugalos"
+repository = "https://github.com/frugalos/frugalos"
+readme = "README.md"
+license = "MIT"
+
+[badges]
+travis-ci = {repository = "frugalos/frugalos"}
+
+[dependencies]
+trackable = "0.2"

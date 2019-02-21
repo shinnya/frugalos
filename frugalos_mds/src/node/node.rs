@@ -749,6 +749,9 @@ impl Stream for Node {
                 );
             }
         }
+        info!(self.logger, "ok");
+        debug_wait!(self.phase != Phase::Stopped, Duration::from_secs(1000));
+        info!(self.logger, "bad");
 
         // FIXME: もっと適切な場所に移動
         if self.phase == Phase::Stopped {
