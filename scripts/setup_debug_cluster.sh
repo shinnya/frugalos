@@ -26,7 +26,7 @@ tmux new-window -n $WIN -c $WORK_DIR
 ## Starts frugalos cluster
 ##
 tmux send-keys -t $WIN.0 "bin/frugalos create --id srv0 --addr 127.0.0.1:${RPC_PORT} --data-dir srv0" C-m
-tmux send-keys -t $WIN.0 "bin/frugalos start --data-dir srv0 --sampling-rate 1.0 --http-server-bind-addr 127.0.0.1:${PORT}" C-m
+tmux send-keys -t $WIN.0 "bin/frugalos start --rpc-write-timeout-millis 20 --data-dir srv0 --sampling-rate 1.0 --http-server-bind-addr 127.0.0.1:${PORT}" C-m
 sleep 6
 
 ##

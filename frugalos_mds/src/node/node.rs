@@ -237,6 +237,8 @@ impl Node {
             }
             Request::List(monitored) => {
                 let list = self.machine.to_summaries();
+                use std::thread;
+                thread::sleep(Duration::from_secs(30));
                 monitored.exit(Ok(list));
             }
             Request::LatestVersion(monitored) => {

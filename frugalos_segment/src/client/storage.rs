@@ -51,7 +51,7 @@ impl StorageClient {
         match config.storage {
             Storage::Metadata => StorageClient::Metadata,
             Storage::Replicated(c) => {
-                StorageClient::Replicated(ReplicatedClient::new(config.cluster, c, rpc_service))
+                StorageClient::Replicated(ReplicatedClient::new(logger.clone(), config.cluster, c, rpc_service))
             }
             Storage::Dispersed(c) => StorageClient::Dispersed(DispersedClient::new(
                 logger,
@@ -111,17 +111,20 @@ impl StorageClient {
 
 #[derive(Debug, Clone)]
 pub struct ReplicatedClient {
+    logger: Logger,
     cluster: Arc<ClusterConfig>,
     config: ReplicatedConfig,
     rpc_service: RpcServiceHandle,
 }
 impl ReplicatedClient {
     pub fn new(
+        logger: Logger,
         cluster: ClusterConfig,
         config: ReplicatedConfig,
         rpc_service: RpcServiceHandle,
     ) -> Self {
         ReplicatedClient {
+            logger,
             cluster: Arc::new(cluster),
             config,
             rpc_service,
@@ -193,7 +196,7 @@ impl ReplicatedClient {
                 );
                 future
             });
-        Box::new(PutAll::new(futures, 1))
+        Box::new(PutAll::new(self.logger.clone(), futures, 1))
     }
 }
 
@@ -252,17 +255,19 @@ impl Future for ReplicatedGet {
 }
 
 pub struct PutAll {
+    logger: Logger,
     future: future::SelectAll<BoxFuture<()>>,
     ok_count: usize,
     required_ok_count: usize,
 }
 impl PutAll {
-    pub fn new<I>(futures: I, required_ok_count: usize) -> Self
+    pub fn new<I>(logger: Logger, futures: I, required_ok_count: usize) -> Self
     where
         I: Iterator<Item = BoxFuture<()>>,
     {
         let future = future::select_all(futures);
         PutAll {
+            logger,
             future,
             ok_count: 0,
             required_ok_count,
@@ -276,6 +281,7 @@ impl Future for PutAll {
         loop {
             let remainings = match self.future.poll() {
                 Err((e, _, remainings)) => {
+                    error!(self.logger, "put error = {:?}", e);
                     if remainings.is_empty() && self.ok_count < self.required_ok_count {
                         return Err(track!(e));
                     }
@@ -455,6 +461,7 @@ impl DispersedClient {
                 result
             });
         Box::new(DispersedPut {
+            logger: self.logger.clone(),
             cluster: self.cluster.clone(),
             version,
             deadline,
@@ -467,6 +474,7 @@ impl DispersedClient {
 }
 
 pub struct DispersedPut {
+    logger: Logger,
     cluster: Arc<ClusterConfig>,
     version: ObjectVersion,
     deadline: Deadline,
@@ -540,7 +548,7 @@ impl Future for DispersedPut {
                             );
                             future
                         });
-                    Phase::B(PutAll::new(futures, self.data_fragments))
+                    Phase::B(PutAll::new(self.logger.clone(), futures, self.data_fragments))
                 }
                 Phase::B(()) => {
                     return Ok(Async::Ready(()));
