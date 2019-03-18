@@ -6,7 +6,7 @@ use libfrugalos::time::Seconds;
 use patricia_tree::PatriciaMap;
 use std::collections::HashMap;
 
-use {Error, Result};
+use {Error, ErrorKind, Result};
 
 /// ノードの状態を管理するための状態機械.
 #[derive(Debug, Clone)]
@@ -74,12 +74,17 @@ impl Machine {
         expect: &Expect,
     ) -> Result<Option<ObjectVersion>> {
         track!(self.check_version(&object_id, &expect))?;
+        let new_version = metadata.version.clone();
         if metadata.data.is_empty() {
             self.id_to_data.remove(&object_id);
         } else {
             self.id_to_data.insert(object_id.clone(), metadata.data);
         }
-        Ok(self.id_to_version.insert(object_id, metadata.version))
+        if let Some(old_version) = self.id_to_version.insert(object_id, metadata.version) {
+            track_assert!(old_version != new_version, ErrorKind::InvalidInput);
+            return Ok(Some(old_version));
+        }
+        Ok(None)
     }
     pub fn delete(
         &mut self,
