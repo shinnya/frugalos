@@ -51,9 +51,12 @@ impl StorageClient {
         use config::Storage;
         match config.storage {
             Storage::Metadata => StorageClient::Metadata,
-            Storage::Replicated(c) => {
-                StorageClient::Replicated(ReplicatedClient::new(config.cluster, c, rpc_service))
-            }
+            Storage::Replicated(c) => StorageClient::Replicated(ReplicatedClient::new(
+                logger,
+                config.cluster,
+                c,
+                rpc_service,
+            )),
             Storage::Dispersed(c) => StorageClient::Dispersed(DispersedClient::new(
                 logger,
                 config.cluster,
@@ -113,17 +116,20 @@ impl StorageClient {
 
 #[derive(Debug, Clone)]
 pub struct ReplicatedClient {
+    logger: Logger,
     cluster: Arc<ClusterConfig>,
     config: ReplicatedConfig,
     rpc_service: RpcServiceHandle,
 }
 impl ReplicatedClient {
     pub fn new(
+        logger: Logger,
         cluster: ClusterConfig,
         config: ReplicatedConfig,
         rpc_service: RpcServiceHandle,
     ) -> Self {
         ReplicatedClient {
+            logger,
             cluster: Arc::new(cluster),
             config,
             rpc_service,
@@ -195,7 +201,7 @@ impl ReplicatedClient {
                 );
                 future
             });
-        let put_all = match track!(PutAll::new(futures, 1)) {
+        let put_all = match track!(PutAll::new(self.logger.clone(), futures, 1)) {
             Ok(put_all) => put_all,
             Err(error) => return Box::new(futures::failed(error)),
         };
@@ -258,12 +264,13 @@ impl Future for ReplicatedGet {
 }
 
 pub struct PutAll {
+    logger: Logger,
     future: future::SelectAll<BoxFuture<()>>,
     ok_count: usize,
     required_ok_count: usize,
 }
 impl PutAll {
-    pub fn new<I>(futures: I, required_ok_count: usize) -> Result<Self>
+    pub fn new<I>(logger: Logger, futures: I, required_ok_count: usize) -> Result<Self>
     where
         I: Iterator<Item = BoxFuture<()>>,
     {
@@ -277,6 +284,7 @@ impl PutAll {
         }
         let future = future::select_all(futures);
         Ok(PutAll {
+            logger,
             future,
             ok_count: 0,
             required_ok_count,
@@ -290,6 +298,14 @@ impl Future for PutAll {
         loop {
             let remainings = match self.future.poll() {
                 Err((e, _, remainings)) => {
+                    warn!(
+                        self.logger,
+                        "Put failed: error={}, remainings.len={}, ok_count={}, required_ok_count={}",
+                        e,
+                        remainings.len(),
+                        self.ok_count,
+                        self.required_ok_count
+                    );
                     if remainings.len() + self.ok_count < self.required_ok_count {
                         return Err(track!(e));
                     }
@@ -474,6 +490,7 @@ impl DispersedClient {
                 result
             });
         Box::new(DispersedPut {
+            logger: self.logger.clone(),
             cluster: self.cluster.clone(),
             version,
             deadline,
@@ -486,6 +503,7 @@ impl DispersedClient {
 }
 
 pub struct DispersedPut {
+    logger: Logger,
     cluster: Arc<ClusterConfig>,
     version: ObjectVersion,
     deadline: Deadline,
@@ -559,7 +577,11 @@ impl Future for DispersedPut {
                             );
                             future
                         });
-                    Phase::B(track!(PutAll::new(futures, self.data_fragments))?)
+                    Phase::B(track!(PutAll::new(
+                        self.logger.clone(),
+                        futures,
+                        self.data_fragments
+                    ))?)
                 }
                 Phase::B(()) => {
                     return Ok(Async::Ready(()));
@@ -867,6 +889,7 @@ fn verify_and_remove_checksum(bytes: &mut Vec<u8>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use slog::Discard;
     use test_util::tests::{setup_system, wait, System};
     use trackable::result::TestResult;
 
@@ -883,17 +906,18 @@ mod tests {
 
     #[test]
     fn put_all_new_works() -> TestResult {
+        let logger = Logger::root(Discard, o!());
         let futures: Vec<BoxFuture<_>> = vec![];
-        assert!(PutAll::new(futures.into_iter(), 2).is_err());
+        assert!(PutAll::new(logger.clone(), futures.into_iter(), 2).is_err());
 
         let futures: Vec<BoxFuture<_>> = vec![Box::new(futures::future::ok(()))];
-        assert!(PutAll::new(futures.into_iter(), 2).is_err());
+        assert!(PutAll::new(logger.clone(), futures.into_iter(), 2).is_err());
 
         let futures: Vec<BoxFuture<_>> = vec![
             Box::new(futures::future::ok(())),
             Box::new(futures::future::ok(())),
         ];
-        let put = track!(PutAll::new(futures.into_iter(), 2))?;
+        let put = track!(PutAll::new(logger.clone(), futures.into_iter(), 2))?;
         assert!(wait(put).is_ok());
 
         let futures: Vec<BoxFuture<_>> = vec![
@@ -901,7 +925,7 @@ mod tests {
             Box::new(futures::future::ok(())),
             Box::new(futures::future::ok(())),
         ];
-        let put = track!(PutAll::new(futures.into_iter(), 2))?;
+        let put = track!(PutAll::new(logger.clone(), futures.into_iter(), 2))?;
         assert!(wait(put).is_ok());
 
         Ok(())
@@ -914,19 +938,21 @@ mod tests {
             Box::new(futures::future::ok(())),
             Box::new(futures::future::err(ErrorKind::Other.into())),
         ];
-        let put = track!(PutAll::new(futures.into_iter(), 2))?;
+        let logger = Logger::root(Discard, o!());
+        let put = track!(PutAll::new(logger, futures.into_iter(), 2))?;
         assert!(wait(put).is_err());
         Ok(())
     }
 
     #[test]
     fn put_all_fails_even_if_last_operation_succeeds() -> TestResult {
+        let logger = Logger::root(Discard, o!());
         let futures: Vec<BoxFuture<_>> = vec![
             Box::new(futures::future::err(ErrorKind::Other.into())),
             Box::new(futures::future::err(ErrorKind::Other.into())),
             Box::new(futures::future::ok(())),
         ];
-        let put = track!(PutAll::new(futures.into_iter(), 2))?;
+        let put = track!(PutAll::new(logger, futures.into_iter(), 2))?;
         assert!(wait(put).is_err());
         Ok(())
     }
