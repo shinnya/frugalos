@@ -13,7 +13,7 @@ use futures::{Async, Future, Poll, Stream};
 use libfrugalos::client::config::Client;
 use libfrugalos::entity::server::Server;
 use prometrics::metrics::MetricBuilder;
-use raftlog::ReplicatedLog;
+use raftlog::{ComponentId, ReplicatedLog};
 use slog::Logger;
 use std::fs;
 use std::net::SocketAddr;
@@ -96,7 +96,12 @@ pub fn make_rlog<P: AsRef<Path>, S: Spawn + Clone + Send + 'static>(
         .into_iter()
         .map(|s| server_to_frugalos_raft_node(&s).to_raft_node_id())
         .collect();
-    let rlog = track!(ReplicatedLog::new(node.to_raft_node_id(), members, io))?;
+    let rlog = track!(ReplicatedLog::new(
+        ComponentId::new("frugalos_config"),
+        node.to_raft_node_id(),
+        members,
+        io
+    ))?;
     Ok((device, rlog))
 }
 

@@ -11,7 +11,7 @@ use raftlog;
 use raftlog::cluster::ClusterMembers;
 use raftlog::election::Role;
 use raftlog::log::{LogEntry, LogIndex};
-use raftlog::{Event, Io, ReplicatedLog};
+use raftlog::{ComponentId, Event, Io, ReplicatedLog};
 use slog::{Discard, Logger};
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -80,6 +80,7 @@ impl System {
 
         for (node_id, io) in nodes {
             self.rlogs.push(track!(ReplicatedLog::new(
+                ComponentId::new("test"),
                 node_id,
                 self.members.clone(),
                 io

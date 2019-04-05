@@ -12,7 +12,7 @@ use prometrics::metrics::{Counter, CounterBuilder, Gauge, GaugeBuilder};
 use raftlog::cluster::{ClusterConfig, ClusterMembers};
 use raftlog::election::Role;
 use raftlog::log::{LogEntry, LogIndex, LogPosition};
-use raftlog::{self, ReplicatedLog};
+use raftlog::{self, ComponentId, ReplicatedLog};
 use slog::Logger;
 use std::collections::VecDeque;
 use std::env;
@@ -170,7 +170,12 @@ impl Node {
         let node_handle = NodeHandle::new(request_tx.clone());
         track!(service.add_node(node_id, node_handle))?;
 
-        let rlog = track!(ReplicatedLog::new(node_id.to_raft_node_id(), cluster, io))?;
+        let rlog = track!(ReplicatedLog::new(
+            ComponentId::new("frugalos_mds"),
+            node_id.to_raft_node_id(),
+            cluster,
+            io
+        ))?;
 
         // For backward compatibility
         let snapshot_threshold = config.snapshot_threshold();
