@@ -79,8 +79,11 @@ impl System {
         }
 
         for (node_id, io) in nodes {
-            self.rlogs
-                .push(ReplicatedLog::new(node_id, self.members.clone(), io));
+            self.rlogs.push(track!(ReplicatedLog::new(
+                node_id,
+                self.members.clone(),
+                io
+            ))?);
         }
 
         Ok(())

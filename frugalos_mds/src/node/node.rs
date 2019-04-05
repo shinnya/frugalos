@@ -170,7 +170,7 @@ impl Node {
         let node_handle = NodeHandle::new(request_tx.clone());
         track!(service.add_node(node_id, node_handle))?;
 
-        let rlog = ReplicatedLog::new(node_id.to_raft_node_id(), cluster, io);
+        let rlog = track!(ReplicatedLog::new(node_id.to_raft_node_id(), cluster, io))?;
 
         // For backward compatibility
         let snapshot_threshold = config.snapshot_threshold();
