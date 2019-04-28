@@ -238,6 +238,7 @@ impl SegmentNode {
             logger.clone(),
             node_id.local_id,
             device.clone(),
+            Default::default(),
             frugalos_raft::StorageMetrics::new(),
         );
         let mailer = frugalos_raft::Mailer::new(

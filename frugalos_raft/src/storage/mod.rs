@@ -7,6 +7,7 @@ use raftlog::election::Ballot;
 use raftlog::log::{LogIndex, LogPosition, LogPrefix, LogSuffix};
 use raftlog::{Error, ErrorKind, Result};
 use slog::Logger;
+use std::env;
 use std::sync::atomic::{self, AtomicUsize};
 use trackable::error::ErrorKindExt;
 
@@ -59,6 +60,7 @@ pub struct Storage {
     event_rx: mpsc::Receiver<Event>,
     event_tx: mpsc::Sender<Event>,
     phase: Phase,
+    config: StorageConfig,
     metrics: StorageMetrics,
 }
 impl Storage {
@@ -67,6 +69,7 @@ impl Storage {
         logger: Logger,
         node_id: LocalNodeId,
         device: DeviceHandle,
+        config: StorageConfig,
         metrics: StorageMetrics,
     ) -> Self {
         let (event_tx, event_rx) = mpsc::channel();
@@ -80,6 +83,7 @@ impl Storage {
             event_rx,
             event_tx,
             phase: Phase::Started,
+            config,
             metrics,
         }
     }
@@ -341,6 +345,27 @@ enum Phase {
     Started,
     Initializing,
     Initialized,
+}
+
+#[derive(Debug, Clone)]
+pub struct StorageConfig {
+    ignore_prefix: bool,
+    ignore_suffix: bool,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        let ignore_prefix = env::var("FRUGALOS_RAFT_IGNORE_PREFIX")
+            .ok()
+            .map_or(false, |v| v == "1");
+        let ignore_suffix = env::var("FRUGALOS_RAFT_IGNORE_SUFFIX")
+            .ok()
+            .map_or(false, |v| v == "1");
+        Self {
+            ignore_prefix,
+            ignore_suffix,
+        }
+    }
 }
 
 /// Metrics for `storage`.

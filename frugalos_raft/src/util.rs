@@ -23,6 +23,30 @@ where
 }
 
 #[derive(Debug)]
+pub enum Phase3<A, B, C> {
+    A(A),
+    B(B),
+    C(C),
+}
+impl<A, B, C> Future for Phase3<A, B, C>
+where
+    A: Future<Error = Error>,
+    B: Future<Error = Error>,
+    C: Future<Error = Error>,
+{
+    type Item = Phase3<A::Item, B::Item, C::Item>;
+    type Error = Error;
+
+    fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        match self {
+            Phase3::A(f) => track!(f.poll()).map(|t| t.map(Phase3::A)),
+            Phase3::B(f) => track!(f.poll()).map(|t| t.map(Phase3::B)),
+            Phase3::C(f) => track!(f.poll()).map(|t| t.map(Phase3::C)),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum Phase5<A, B, C, D, E> {
     A(A),
     B(B),

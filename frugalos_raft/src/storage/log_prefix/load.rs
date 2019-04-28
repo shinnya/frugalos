@@ -7,29 +7,32 @@ use std::mem;
 use std::ops::Range;
 use std::time::Instant;
 
-use super::super::{into_box_future, BoxFuture, Handle, Storage};
+use super::super::{into_box_future, BoxFuture, Handle, Storage, StorageConfig};
+use super::delete::DeleteOldLogPrefixBytes;
 use protobuf;
-use util::Phase;
+use util::Phase3;
 use StorageMetrics;
 
 // #[derive(Debug)]
 pub struct LoadLogPrefix {
     handle: Handle,
-    phase: Phase<LoadLogPrefixIndex, LoadLogPrefixBytes>,
+    phase: Phase3<LoadLogPrefixIndex, DeleteOldLogPrefixBytes, LoadLogPrefixBytes>,
     prefix_index: Range<u64>,
     started_at: Instant,
+    config: StorageConfig,
     metrics: StorageMetrics,
 }
 impl LoadLogPrefix {
     pub fn new(storage: &Storage) -> Self {
         let handle = storage.handle.clone();
-        let phase = Phase::A(LoadLogPrefixIndex::new(handle.clone()));
+        let phase = Phase3::A(LoadLogPrefixIndex::new(handle.clone()));
         info!(handle.logger, "[START] LoadLogPrefix");
         LoadLogPrefix {
             handle,
             phase,
             prefix_index: Range { start: 0, end: 0 },
             started_at: Instant::now(),
+            config: storage.config.clone(),
             metrics: storage.metrics.clone(),
         }
     }
@@ -40,7 +43,7 @@ impl Future for LoadLogPrefix {
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         while let Async::Ready(phase) = self.phase.poll()? {
             let next = match phase {
-                Phase::A(None) => {
+                Phase3::A(None) => {
                     info!(
                         self.handle.logger,
                         "[FINISH] LoadLogPrefix: Index Not Found"
@@ -52,7 +55,7 @@ impl Future for LoadLogPrefix {
                         .observe(elapsed);
                     return Ok(Async::Ready(None));
                 }
-                Phase::A(Some(index)) => {
+                Phase3::A(Some(index)) => {
                     if index == self.prefix_index {
                         // リトライ前後でインデックスが変わらない場合には、
                         // 保存処理と競合した訳ではなく、そもそもデータが存在しないことを意味する.
@@ -65,10 +68,23 @@ impl Future for LoadLogPrefix {
                         return Ok(Async::Ready(None));
                     } else {
                         self.prefix_index = index.clone();
-                        Phase::B(LoadLogPrefixBytes::new(self.handle.clone(), index))
+                        if self.config.ignore_prefix {
+                            Phase3::B(DeleteOldLogPrefixBytes::new(self.handle.clone(), index))
+                        } else {
+                            Phase3::C(LoadLogPrefixBytes::new(self.handle.clone(), index))
+                        }
                     }
                 }
-                Phase::B(bytes) => {
+                Phase3::B(()) => {
+                    info!(self.handle.logger, "[FINISH] LoadLogPrefix: Index Ignored");
+                    let elapsed =
+                        prometrics::timestamp::duration_to_seconds(self.started_at.elapsed());
+                    self.metrics
+                        .load_log_prefix_duration_seconds
+                        .observe(elapsed);
+                    return Ok(Async::Ready(None));
+                }
+                Phase3::C(bytes) => {
                     if let Some(bytes) = bytes {
                         let prefix = track!(protobuf::decode_log_prefix(&bytes))?;
                         info!(
@@ -87,7 +103,7 @@ impl Future for LoadLogPrefix {
                         // => ロード中に新しい`LogPrefix`がインストールされた可能性が高いので、
                         //    リトライを行う.
                         info!(self.handle.logger, "[RETRY] LoadLogPrefix");
-                        Phase::A(LoadLogPrefixIndex::new(self.handle.clone()))
+                        Phase3::A(LoadLogPrefixIndex::new(self.handle.clone()))
                     }
                 }
             };

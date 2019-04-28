@@ -6,10 +6,13 @@ use futures::{self, Async, Future, Poll};
 use raftlog::log::{LogEntry, LogIndex, LogSuffix};
 use raftlog::Error;
 use std::mem;
+use std::ops::Range;
 use std::time::Instant;
 
-use super::{into_box_future, BoxFuture, Event, Handle, Storage};
+use super::log_prefix::DeleteOldLogEntries;
+use super::{into_box_future, BoxFuture, Event, Handle, Storage, StorageConfig};
 use protobuf;
+use util::Phase;
 use StorageMetrics;
 
 // #[derive(Debug)]
@@ -17,7 +20,8 @@ pub struct LoadLogSuffix {
     handle: Handle,
     current: LogIndex,
     suffix: LogSuffix,
-    future: LoadLogEntry,
+    config: StorageConfig,
+    future: Phase<LoadLogEntry, DeleteOldLogEntries>,
     event_tx: mpsc::Sender<Event>,
     started_at: Instant,
     metrics: StorageMetrics,
@@ -34,7 +38,8 @@ impl LoadLogSuffix {
             handle: handle.clone(),
             suffix,
             current: head.index,
-            future: LoadLogEntry::new(handle, head.index),
+            config: storage.config.clone(),
+            future: Phase::A(LoadLogEntry::new(handle, head.index)),
             event_tx: storage.event_tx.clone(),
             started_at: Instant::now(),
             metrics: storage.metrics.clone(),
@@ -45,25 +50,46 @@ impl Future for LoadLogSuffix {
     type Item = LogSuffix;
     type Error = Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
-        while let Async::Ready(entry) = track!(self.future.poll())? {
-            if let Some(entry) = entry {
-                self.suffix.entries.push(entry);
-                self.current += 1;
-                self.future = LoadLogEntry::new(self.handle.clone(), self.current)
-            } else {
-                info!(
-                    self.handle.logger,
-                    "[FINISH] LoadLogSuffix: {}",
-                    dump!(self.current)
-                );
-                let elapsed = prometrics::timestamp::duration_to_seconds(self.started_at.elapsed());
-                self.metrics
-                    .load_log_suffix_duration_seconds
-                    .observe(elapsed);
-                let suffix = mem::replace(&mut self.suffix, LogSuffix::default());
-                let _ = self.event_tx.send(Event::LogSuffixLoaded(suffix.clone()));
-                return Ok(Async::Ready(suffix));
-            }
+        while let Async::Ready(phase) = self.future.poll()? {
+            let next = match phase {
+                Phase::A(Some(entry)) => {
+                    info!(
+                        self.handle.logger,
+                        "[PROCESSING] LoadLogSuffix: {}",
+                        dump!(self.current)
+                    );
+                    self.suffix.entries.push(entry);
+                    self.current += 1;
+                    Phase::A(LoadLogEntry::new(self.handle.clone(), self.current))
+                }
+                Phase::A(None) => {
+                    info!(
+                        self.handle.logger,
+                        "[FINISH] LoadLogSuffix: {}",
+                        dump!(self.current)
+                    );
+                    let elapsed =
+                        prometrics::timestamp::duration_to_seconds(self.started_at.elapsed());
+                    self.metrics
+                        .load_log_suffix_duration_seconds
+                        .observe(elapsed);
+                    let suffix = mem::replace(&mut self.suffix, LogSuffix::default());
+                    let _ = self.event_tx.send(Event::LogSuffixLoaded(suffix.clone()));
+                    let old_entries = Range {
+                        start: self.suffix.head.index,
+                        end: suffix.tail().index,
+                    };
+                    if !self.config.ignore_suffix {
+                        return Ok(Async::Ready(suffix));
+                    }
+                    match DeleteOldLogEntries::new(self.handle.clone(), old_entries) {
+                        Ok(next) => Phase::B(next),
+                        Err(e) => return Err(track!(Error::from(e))),
+                    }
+                }
+                Phase::B(()) => return Ok(Async::Ready(LogSuffix::default())),
+            };
+            self.future = next;
         }
         Ok(Async::NotReady)
     }

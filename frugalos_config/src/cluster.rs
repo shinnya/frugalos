@@ -91,6 +91,7 @@ pub fn make_rlog<P: AsRef<Path>, S: Spawn + Clone + Send + 'static>(
         logger,
         node.local_id,
         device.handle(),
+        Default::default(),
         frugalos_raft::StorageMetrics::new(),
     );
     let mailer = frugalos_raft::Mailer::new(spawner, rpc_service, None);

@@ -59,7 +59,7 @@ impl Future for DeleteOldLogPrefixBytes {
 }
 
 // #[derive(Debug)]
-pub(crate) struct DeleteOldLogEntries {
+pub struct DeleteOldLogEntries {
     handle: Handle,
     future: BoxFuture<()>,
 }
