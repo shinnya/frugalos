@@ -25,6 +25,9 @@ pub enum ErrorKind {
     /// リーダ以外に対して要求が発行された.
     NotLeader,
 
+    /// 計画的なメンテナンス状態のため要求に応答できない.
+    Maintenance,
+
     /// その他のエラー.
     Other,
 }
@@ -126,6 +129,7 @@ pub fn to_rpc_error(e: Error) -> libfrugalos::Error {
         ErrorKind::InvalidInput => libfrugalos::ErrorKind::InvalidInput,
         ErrorKind::NotLeader => libfrugalos::ErrorKind::NotLeader,
         ErrorKind::Unexpected(v) => libfrugalos::ErrorKind::Unexpected(v),
+        ErrorKind::Maintenance => libfrugalos::ErrorKind::Unavailable,
         ErrorKind::Other => libfrugalos::ErrorKind::Other,
     };
     kind.takes_over(e).into()

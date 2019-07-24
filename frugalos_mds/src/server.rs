@@ -12,6 +12,7 @@ use trackable::error::ErrorKindExt;
 
 use error::to_rpc_error;
 use node::NodeHandle;
+use service::Response;
 use {Error, ErrorKind, Result, ServiceHandle};
 
 macro_rules! rpc_try {
@@ -70,13 +71,12 @@ impl Server {
     }
 
     fn get_node(&self, node: LocalNodeId) -> Result<NodeHandle> {
-        track!(
-            self.service
-                .get_node(node)
-                .ok_or_else(|| ErrorKind::Other.cause("No such node").into()),
-            "node={:?}",
-            node
-        )
+        match self.service.get_node(node) {
+            Response::Stopping => Err(ErrorKind::Maintenance.into()),
+            Response::Running(handle) => {
+                handle.ok_or_else(|| ErrorKind::Other.cause("No such node").into())
+            }
+        }
     }
 
     fn start_span(&self, operation: &'static str) -> Span {

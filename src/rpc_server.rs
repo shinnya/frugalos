@@ -210,6 +210,7 @@ fn into_rpc_error(e: Error) -> libfrugalos::Error {
     let kind = match *e.kind() {
         ErrorKind::InvalidInput => libfrugalos::ErrorKind::InvalidInput,
         ErrorKind::NotFound => libfrugalos::ErrorKind::Other,
+        ErrorKind::Unavailable => libfrugalos::ErrorKind::Unavailable,
         ErrorKind::Unexpected(v) => libfrugalos::ErrorKind::Unexpected(v),
         ErrorKind::Other => libfrugalos::ErrorKind::Other,
     };

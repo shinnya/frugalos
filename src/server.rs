@@ -253,8 +253,16 @@ impl HandleRequest for GetObject {
                             get_object_id(req.url()),
                             e
                         );
-                        span.set_tag(|| StdTag::http_status_code(500));
-                        make_object_response(Status::InternalServerError, None, Err(e))
+                        match *e.kind() {
+                            ErrorKind::Unavailable => {
+                                span.set_tag(|| StdTag::http_status_code(503));
+                                make_object_response(Status::ServiceUnavailable, None, Err(e))
+                            }
+                            _ => {
+                                span.set_tag(|| StdTag::http_status_code(500));
+                                make_object_response(Status::InternalServerError, None, Err(e))
+                            }
+                        }
                     }
                 };
                 Ok(response)

@@ -6,13 +6,16 @@ use frugalos_raft::{LocalNodeId, NodeId};
 use futures::{Async, Future, Poll, Stream};
 use slog::Logger;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use node::NodeHandle;
 use server::Server;
+use std::fmt::Debug;
 use {Error, Result};
 
 type Nodes = Arc<AtomicImmut<HashMap<LocalNodeId, NodeHandle>>>;
+type Stopping = Arc<AtomicBool>;
 
 /// MDS用のサービスを表す`Future`実装.
 ///
@@ -25,7 +28,7 @@ pub struct Service {
     nodes: Nodes,
     command_tx: mpsc::Sender<Command>,
     command_rx: mpsc::Receiver<Command>,
-    do_stop: bool,
+    do_stop: Stopping,
 }
 impl Service {
     /// 新しい`Service`インスタンスを生成する.
@@ -41,7 +44,7 @@ impl Service {
             nodes,
             command_tx,
             command_rx,
-            do_stop: false,
+            do_stop: Arc::new(AtomicBool::new(false)),
         };
         Server::register(this.handle(), rpc, tracer);
         Ok(this)
@@ -52,6 +55,7 @@ impl Service {
         ServiceHandle {
             nodes: self.nodes.clone(),
             command_tx: self.command_tx.clone(),
+            stopping: self.do_stop.clone(),
         }
     }
 
@@ -59,26 +63,28 @@ impl Service {
     ///
     /// サービス停止前には、全てのローカルノードでスナップショットが取得される.
     pub fn stop(&mut self) {
-        self.do_stop = true;
-        for (id, node) in self.nodes.load().iter() {
-            info!(self.logger, "Sends stop request: {:?}", id);
-            node.stop();
+        if !self.do_stop.swap(true, Ordering::SeqCst) {
+            for (id, node) in self.nodes.load().iter() {
+                info!(self.logger, "Sends stop request: {:?}", id);
+                node.stop();
+            }
         }
     }
 
     /// スナップショットを取得する.
     pub fn take_snapshot(&mut self) {
-        self.do_stop = true;
-        for (id, node) in self.nodes.load().iter() {
-            info!(self.logger, "Sends taking snapshot request: {:?}", id);
-            node.take_snapshot();
+        if !self.do_stop.swap(true, Ordering::SeqCst) {
+            for (id, node) in self.nodes.load().iter() {
+                info!(self.logger, "Sends taking snapshot request: {:?}", id);
+                node.take_snapshot();
+            }
         }
     }
 
     fn handle_command(&mut self, command: Command) {
         match command {
             Command::AddNode(id, node) => {
-                if self.do_stop {
+                if self.do_stop.load(Ordering::SeqCst) {
                     warn!(self.logger, "Ignored: id={:?}, node={:?}", id, node);
                     return;
                 }
@@ -111,7 +117,7 @@ impl Future for Service {
             if let Async::Ready(command) = polled {
                 let command = command.expect("Unreachable");
                 self.handle_command(command);
-                if self.do_stop && self.nodes.load().is_empty() {
+                if self.do_stop.load(Ordering::SeqCst) && self.nodes.load().is_empty() {
                     return Ok(Async::Ready(()));
                 }
             } else {
@@ -127,6 +133,12 @@ enum Command {
     RemoveNode(LocalNodeId),
 }
 
+#[derive(Debug)]
+pub(crate) enum Response<T: Debug> {
+    Stopping,
+    Running(T),
+}
+
 /// `Service`を操作するためのハンドル.
 ///
 /// `Service`に対する操作はクレート内で閉じているため、
@@ -135,6 +147,7 @@ enum Command {
 pub struct ServiceHandle {
     nodes: Nodes,
     command_tx: mpsc::Sender<Command>,
+    stopping: Stopping,
 }
 impl ServiceHandle {
     pub(crate) fn add_node(&self, id: NodeId, node: NodeHandle) -> Result<()> {
@@ -155,8 +168,12 @@ impl ServiceHandle {
         )?;
         Ok(())
     }
-    pub(crate) fn get_node(&self, local_id: LocalNodeId) -> Option<NodeHandle> {
-        self.nodes().get(&local_id).cloned()
+    pub(crate) fn get_node(&self, local_id: LocalNodeId) -> Response<Option<NodeHandle>> {
+        if self.stopping.load(Ordering::SeqCst) {
+            Response::Stopping
+        } else {
+            Response::Running(self.nodes().get(&local_id).cloned())
+        }
     }
     pub(crate) fn nodes(&self) -> Arc<HashMap<LocalNodeId, NodeHandle>> {
         self.nodes.load()

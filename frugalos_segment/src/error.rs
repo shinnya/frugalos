@@ -15,10 +15,14 @@ use trackable::error::{ErrorKind as TrackableErrorKind, ErrorKindExt};
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub enum ErrorKind {
-    UnexpectedVersion { current: Option<ObjectVersion> },
+    UnexpectedVersion {
+        current: Option<ObjectVersion>,
+    },
     Invalid,
     Busy,
     Corrupted,
+    /// メンテナンス中で利用不可であることを意味する。
+    Maintenance,
     Other,
 }
 impl TrackableErrorKind for ErrorKind {}

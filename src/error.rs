@@ -25,10 +25,12 @@ impl From<io::Error> for Error {
 }
 impl From<frugalos_segment::Error> for Error {
     fn from(f: frugalos_segment::Error) -> Self {
-        if let frugalos_segment::ErrorKind::UnexpectedVersion { current } = *f.kind() {
-            ErrorKind::Unexpected(current).takes_over(f).into()
-        } else {
-            ErrorKind::Other.takes_over(f).into()
+        match *f.kind() {
+            frugalos_segment::ErrorKind::UnexpectedVersion { current } => {
+                ErrorKind::Unexpected(current).takes_over(f).into()
+            }
+            frugalos_segment::ErrorKind::Maintenance => ErrorKind::Unavailable.takes_over(f).into(),
+            _ => ErrorKind::Other.takes_over(f).into(),
         }
     }
 }
@@ -133,6 +135,7 @@ pub enum ErrorKind {
     InvalidInput,
     NotFound,
     Unexpected(Option<ObjectVersion>),
+    Unavailable,
     Other,
 }
 impl TrackableErrorKind for ErrorKind {}

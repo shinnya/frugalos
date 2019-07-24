@@ -421,12 +421,14 @@ where
                     self.client.logger,
                     "Error: node={:?}, reason={}", self.peer, e
                 );
-                if let MdsErrorKind::Unexpected(current) = *e.kind() {
-                    return Err(
-                        track!(ErrorKind::UnexpectedVersion { current }.takes_over(e)).into(),
-                    );
-                } else {
-                    self.client.clear_leader();
+                match *e.kind() {
+                    MdsErrorKind::Unexpected(current) => {
+                        return Err(
+                            track!(ErrorKind::UnexpectedVersion { current }.takes_over(e)).into(),
+                        )
+                    }
+                    MdsErrorKind::Maintenance => return Err(ErrorKind::Maintenance.into()),
+                    _ => self.client.clear_leader(),
                 }
                 if self.max_retry == 0 {
                     return Err(
