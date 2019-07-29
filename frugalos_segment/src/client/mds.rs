@@ -578,7 +578,7 @@ where
         }
         match self.future.poll() {
             Err(e) => {
-                debug!(
+                warn!(
                     self.client.logger,
                     "Error: peers={:?}, reason={}", self.peers, e
                 );
@@ -595,7 +595,7 @@ where
                     );
                 }
                 track!(self.request_once())?;
-                debug!(self.client.logger, "Tries next peers: {:?}", self.peers);
+                warn!(self.client.logger, "Tries next peers: {:?}", self.peers);
                 self.poll()
             }
             Ok(Async::NotReady) => Ok(Async::NotReady),

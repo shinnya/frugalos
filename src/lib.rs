@@ -255,7 +255,7 @@ fn default_loglevel() -> sloggers::types::Severity {
 }
 
 fn default_max_concurrent_logs() -> usize {
-    4096
+    40960
 }
 
 #[cfg(test)]

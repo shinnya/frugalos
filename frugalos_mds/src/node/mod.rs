@@ -208,6 +208,7 @@ enum Request {
     DeleteByRange(ObjectVersion, ObjectVersion, Reply<Vec<ObjectSummary>>),
     DeleteByPrefix(ObjectPrefix, Reply<DeleteObjectsByPrefixSummary>),
     Stop,
+    Exit,
     TakeSnapshot,
 }
 impl Request {
@@ -224,7 +225,7 @@ impl Request {
             Request::DeleteByVersion(_, tx) => tx.exit(Err(track!(e))),
             Request::DeleteByRange(_, _, tx) => tx.exit(Err(track!(e))),
             Request::DeleteByPrefix(_, tx) => tx.exit(Err(track!(e))),
-            Request::Stop | Request::TakeSnapshot | Request::StartElection => {}
+            Request::Exit | Request::Stop | Request::TakeSnapshot | Request::StartElection => {}
         }
     }
 }

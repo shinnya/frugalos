@@ -506,6 +506,11 @@ impl Node {
                     error!(self.logger, "Cannot take snapshot: {}", e);
                 }
             }
+            Request::Exit => {
+                if self.phase == Phase::Stopping {
+                    self.phase = Phase::Stopped;
+                }
+            }
         }
     }
     fn take_snapshot(&mut self) -> Result<bool> {
@@ -620,7 +625,7 @@ impl Node {
                     "New snapshot is installed: new_head={:?}, phase={:?}", new_head, self.phase
                 );
                 if self.phase == Phase::Stopping {
-                    self.phase = Phase::Stopped;
+                    self.service.stop_node(self.node_id);
                 }
             }
         }
@@ -920,18 +925,19 @@ impl Stream for Node {
             }
         }
 
-        // FIXME: もっと適切な場所に移動
-        if self.phase == Phase::Stopped {
-            info!(self.logger, "Stopped");
-            return Ok(Async::Ready(None));
-        }
-
         if let Some(event) = self.events.pop_front() {
             if self.events.capacity() > 32 && self.events.len() < self.events.capacity() / 2 {
                 self.events.shrink_to_fit();
             }
             return Ok(Async::Ready(Some(event)));
         }
+
+        // FIXME: もっと適切な場所に移動
+        if self.phase == Phase::Stopped {
+            info!(self.logger, "Stopped");
+            return Ok(Async::Ready(None));
+        }
+
         Ok(Async::NotReady)
     }
 }

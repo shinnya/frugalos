@@ -5,8 +5,9 @@ use frugalos_core::tracer::ThreadLocalTracer;
 use frugalos_raft::{LocalNodeId, NodeId};
 use futures::{Async, Future, Poll, Stream};
 use slog::Logger;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use node::NodeHandle;
 use server::Server;
@@ -23,9 +24,10 @@ type Nodes = Arc<AtomicImmut<HashMap<LocalNodeId, NodeHandle>>>;
 pub struct Service {
     logger: Logger,
     nodes: Nodes,
+    stopped_nodes: Arc<AtomicImmut<HashSet<LocalNodeId>>>,
     command_tx: mpsc::Sender<Command>,
     command_rx: mpsc::Receiver<Command>,
-    do_stop: bool,
+    do_stop: Arc<AtomicBool>,
 }
 impl Service {
     /// 新しい`Service`インスタンスを生成する.
@@ -35,13 +37,15 @@ impl Service {
         tracer: ThreadLocalTracer,
     ) -> Result<Self> {
         let nodes = Arc::new(AtomicImmut::new(HashMap::new()));
+        let stopped_nodes = Arc::new(AtomicImmut::new(HashSet::new()));
         let (command_tx, command_rx) = mpsc::channel();
         let this = Service {
             logger,
             nodes,
+            stopped_nodes,
             command_tx,
             command_rx,
-            do_stop: false,
+            do_stop: Arc::new(AtomicBool::new(false)),
         };
         Server::register(this.handle(), rpc, tracer);
         Ok(this)
@@ -52,6 +56,7 @@ impl Service {
         ServiceHandle {
             nodes: self.nodes.clone(),
             command_tx: self.command_tx.clone(),
+            do_stop: self.do_stop.clone(),
         }
     }
 
@@ -59,7 +64,7 @@ impl Service {
     ///
     /// サービス停止前には、全てのローカルノードでスナップショットが取得される.
     pub fn stop(&mut self) {
-        self.do_stop = true;
+        self.do_stop.store(true, Ordering::SeqCst);
         for (id, node) in self.nodes.load().iter() {
             info!(self.logger, "Sends stop request: {:?}", id);
             node.stop();
@@ -68,7 +73,7 @@ impl Service {
 
     /// スナップショットを取得する.
     pub fn take_snapshot(&mut self) {
-        self.do_stop = true;
+        self.do_stop.store(true, Ordering::SeqCst);
         for (id, node) in self.nodes.load().iter() {
             info!(self.logger, "Sends taking snapshot request: {:?}", id);
             node.take_snapshot();
@@ -78,7 +83,7 @@ impl Service {
     fn handle_command(&mut self, command: Command) {
         match command {
             Command::AddNode(id, node) => {
-                if self.do_stop {
+                if self.do_stop.load(Ordering::SeqCst) {
                     warn!(self.logger, "Ignored: id={:?}, node={:?}", id, node);
                     return;
                 }
@@ -87,6 +92,27 @@ impl Service {
                 let mut nodes = (&*self.nodes.load()).clone();
                 nodes.insert(id, node);
                 self.nodes.store(nodes);
+            }
+            Command::StopNode(id) => {
+                let mut nodes = (&*self.stopped_nodes.load()).clone();
+                let removed = nodes.insert(id);
+                let len = nodes.len();
+                self.stopped_nodes.store(nodes);
+
+                info!(
+                    self.logger,
+                    "Stops node: id={:?}, node={:?} (len={})", id, removed, len
+                );
+
+                if self.stopped_nodes.load().len() == self.nodes.load().len() {
+                    info!(
+                        self.logger,
+                        "Exit node: id={:?}, node={:?} (len={})", id, removed, len
+                    );
+                    for (_, node) in self.nodes.load().iter() {
+                        node.exit();
+                    }
+                }
             }
             Command::RemoveNode(id) => {
                 let mut nodes = (&*self.nodes.load()).clone();
@@ -111,7 +137,7 @@ impl Future for Service {
             if let Async::Ready(command) = polled {
                 let command = command.expect("Unreachable");
                 self.handle_command(command);
-                if self.do_stop && self.nodes.load().is_empty() {
+                if self.do_stop.load(Ordering::SeqCst) && self.nodes.load().is_empty() {
                     return Ok(Async::Ready(()));
                 }
             } else {
@@ -125,6 +151,7 @@ impl Future for Service {
 enum Command {
     AddNode(LocalNodeId, NodeHandle),
     RemoveNode(LocalNodeId),
+    StopNode(LocalNodeId),
 }
 
 /// `Service`を操作するためのハンドル.
@@ -135,10 +162,20 @@ enum Command {
 pub struct ServiceHandle {
     nodes: Nodes,
     command_tx: mpsc::Sender<Command>,
+    do_stop: Arc<AtomicBool>,
 }
 impl ServiceHandle {
     pub(crate) fn add_node(&self, id: NodeId, node: NodeHandle) -> Result<()> {
         let command = Command::AddNode(id.local_id, node);
+        track!(
+            self.command_tx.send(command).map_err(Error::from),
+            "id={:?}",
+            id
+        )?;
+        Ok(())
+    }
+    pub(crate) fn stop_node(&self, id: NodeId) -> Result<()> {
+        let command = Command::StopNode(id.local_id);
         track!(
             self.command_tx.send(command).map_err(Error::from),
             "id={:?}",
@@ -160,5 +197,8 @@ impl ServiceHandle {
     }
     pub(crate) fn nodes(&self) -> Arc<HashMap<LocalNodeId, NodeHandle>> {
         self.nodes.load()
+    }
+    pub(crate) fn is_stopping(&self) -> bool {
+        self.do_stop.load(Ordering::SeqCst)
     }
 }

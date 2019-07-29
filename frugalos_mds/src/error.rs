@@ -25,6 +25,9 @@ pub enum ErrorKind {
     /// リーダ以外に対して要求が発行された.
     NotLeader,
 
+    /// unavailable
+    Unavailable,
+
     /// その他のエラー.
     Other,
 }
@@ -40,8 +43,8 @@ impl From<libfrugalos::Error> for Error {
             libfrugalos::ErrorKind::InvalidInput => ErrorKind::InvalidInput,
             libfrugalos::ErrorKind::NotLeader => ErrorKind::NotLeader,
             libfrugalos::ErrorKind::Unexpected(v) => ErrorKind::Unexpected(v),
-            libfrugalos::ErrorKind::Unavailable
-            | libfrugalos::ErrorKind::Timeout
+            libfrugalos::ErrorKind::Unavailable => ErrorKind::Unavailable,
+            libfrugalos::ErrorKind::Timeout
             | libfrugalos::ErrorKind::Other => ErrorKind::Other,
         };
         kind.takes_over(f).into()
@@ -126,6 +129,7 @@ pub fn to_rpc_error(e: Error) -> libfrugalos::Error {
         ErrorKind::InvalidInput => libfrugalos::ErrorKind::InvalidInput,
         ErrorKind::NotLeader => libfrugalos::ErrorKind::NotLeader,
         ErrorKind::Unexpected(v) => libfrugalos::ErrorKind::Unexpected(v),
+        ErrorKind::Unavailable => libfrugalos::ErrorKind::Unavailable,
         ErrorKind::Other => libfrugalos::ErrorKind::Other,
     };
     kind.takes_over(e).into()

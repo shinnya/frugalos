@@ -34,6 +34,9 @@ impl NodeHandle {
     pub fn stop(&self) {
         let _ = self.request_tx.send(Request::Stop);
     }
+    pub fn exit(&self) {
+        let _ = self.request_tx.send(Request::Exit);
+    }
     pub fn take_snapshot(&self) {
         let _ = self.request_tx.send(Request::TakeSnapshot);
     }
