@@ -159,11 +159,29 @@ impl LeaderWaiting {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 enum Phase {
     Running,
-    Stopping,
+    Stopping(ServiceHandle),
     Stopped,
+}
+impl PartialEq for Phase {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Phase::Running, Phase::Running) => true,
+            (Phase::Stopped, Phase::Stopped) => true,
+            (Phase::Stopping(_), Phase::Stopping(_)) => true,
+            _ => false,
+        }
+    }
+}
+impl Eq for Phase {}
+impl Drop for Phase {
+    fn drop(&mut self) {
+        if let Phase::Stopping(service) = self {
+            let _ = service.notify_snapshot_taken();
+        }
+    }
 }
 
 /// MDSのクラスタを形成する個々のノード.
@@ -496,7 +514,7 @@ impl Node {
                             self.phase = Phase::Stopped;
                         }
                         Ok(true) => {
-                            self.phase = Phase::Stopping;
+                            self.phase = Phase::Stopping(self.service.clone());
                         }
                     }
                 }
@@ -507,7 +525,7 @@ impl Node {
                 }
             }
             Request::Exit => {
-                if self.phase == Phase::Stopping {
+                if let Phase::Stopping(_) = self.phase {
                     self.phase = Phase::Stopped;
                 }
             }
@@ -624,9 +642,6 @@ impl Node {
                     self.logger,
                     "New snapshot is installed: new_head={:?}, phase={:?}", new_head, self.phase
                 );
-                if self.phase == Phase::Stopping {
-                    self.service.stop_node(self.node_id);
-                }
             }
         }
         Ok(())

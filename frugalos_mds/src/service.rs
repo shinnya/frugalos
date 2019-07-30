@@ -5,9 +5,9 @@ use frugalos_core::tracer::ThreadLocalTracer;
 use frugalos_raft::{LocalNodeId, NodeId};
 use futures::{Async, Future, Poll, Stream};
 use slog::Logger;
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use node::NodeHandle;
 use server::Server;
@@ -24,10 +24,10 @@ type Nodes = Arc<AtomicImmut<HashMap<LocalNodeId, NodeHandle>>>;
 pub struct Service {
     logger: Logger,
     nodes: Nodes,
-    stopped_nodes: Arc<AtomicImmut<HashSet<LocalNodeId>>>,
     command_tx: mpsc::Sender<Command>,
     command_rx: mpsc::Receiver<Command>,
     do_stop: Arc<AtomicBool>,
+    installing_snapshots: usize,
 }
 impl Service {
     /// 新しい`Service`インスタンスを生成する.
@@ -37,15 +37,14 @@ impl Service {
         tracer: ThreadLocalTracer,
     ) -> Result<Self> {
         let nodes = Arc::new(AtomicImmut::new(HashMap::new()));
-        let stopped_nodes = Arc::new(AtomicImmut::new(HashSet::new()));
         let (command_tx, command_rx) = mpsc::channel();
         let this = Service {
             logger,
             nodes,
-            stopped_nodes,
             command_tx,
             command_rx,
             do_stop: Arc::new(AtomicBool::new(false)),
+            installing_snapshots: 0,
         };
         Server::register(this.handle(), rpc, tracer);
         Ok(this)
@@ -67,6 +66,7 @@ impl Service {
         self.do_stop.store(true, Ordering::SeqCst);
         for (id, node) in self.nodes.load().iter() {
             info!(self.logger, "Sends stop request: {:?}", id);
+            self.installing_snapshots += 1;
             node.stop();
         }
     }
@@ -76,6 +76,7 @@ impl Service {
         self.do_stop.store(true, Ordering::SeqCst);
         for (id, node) in self.nodes.load().iter() {
             info!(self.logger, "Sends taking snapshot request: {:?}", id);
+            self.installing_snapshots += 1;
             node.take_snapshot();
         }
     }
@@ -93,27 +94,6 @@ impl Service {
                 nodes.insert(id, node);
                 self.nodes.store(nodes);
             }
-            Command::StopNode(id) => {
-                let mut nodes = (&*self.stopped_nodes.load()).clone();
-                let removed = nodes.insert(id);
-                let len = nodes.len();
-                self.stopped_nodes.store(nodes);
-
-                info!(
-                    self.logger,
-                    "Stops node: id={:?}, node={:?} (len={})", id, removed, len
-                );
-
-                if self.stopped_nodes.load().len() == self.nodes.load().len() {
-                    info!(
-                        self.logger,
-                        "Exit node: id={:?}, node={:?} (len={})", id, removed, len
-                    );
-                    for (_, node) in self.nodes.load().iter() {
-                        node.exit();
-                    }
-                }
-            }
             Command::RemoveNode(id) => {
                 let mut nodes = (&*self.nodes.load()).clone();
                 let removed = nodes.remove(&id);
@@ -124,6 +104,14 @@ impl Service {
                     self.logger,
                     "Removes node: id={:?}, node={:?} (len={})", id, removed, len
                 );
+            }
+            Command::NotifySnapshotTaken => {
+                self.installing_snapshots -= 1;
+                if self.installing_snapshots == 0 {
+                    for (_, node) in self.nodes.load().iter() {
+                        node.exit();
+                    }
+                }
             }
         }
     }
@@ -151,7 +139,7 @@ impl Future for Service {
 enum Command {
     AddNode(LocalNodeId, NodeHandle),
     RemoveNode(LocalNodeId),
-    StopNode(LocalNodeId),
+    NotifySnapshotTaken,
 }
 
 /// `Service`を操作するためのハンドル.
@@ -174,15 +162,6 @@ impl ServiceHandle {
         )?;
         Ok(())
     }
-    pub(crate) fn stop_node(&self, id: NodeId) -> Result<()> {
-        let command = Command::StopNode(id.local_id);
-        track!(
-            self.command_tx.send(command).map_err(Error::from),
-            "id={:?}",
-            id
-        )?;
-        Ok(())
-    }
     pub(crate) fn remove_node(&self, id: NodeId) -> Result<()> {
         let command = Command::RemoveNode(id.local_id);
         track!(
@@ -190,6 +169,11 @@ impl ServiceHandle {
             "id={:?}",
             id
         )?;
+        Ok(())
+    }
+    pub(crate) fn notify_snapshot_taken(&self) -> Result<()> {
+        let command = Command::NotifySnapshotTaken;
+        track!(self.command_tx.send(command).map_err(Error::from))?;
         Ok(())
     }
     pub(crate) fn get_node(&self, local_id: LocalNodeId) -> Option<NodeHandle> {

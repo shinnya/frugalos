@@ -44,8 +44,7 @@ impl From<libfrugalos::Error> for Error {
             libfrugalos::ErrorKind::NotLeader => ErrorKind::NotLeader,
             libfrugalos::ErrorKind::Unexpected(v) => ErrorKind::Unexpected(v),
             libfrugalos::ErrorKind::Unavailable => ErrorKind::Unavailable,
-            libfrugalos::ErrorKind::Timeout
-            | libfrugalos::ErrorKind::Other => ErrorKind::Other,
+            libfrugalos::ErrorKind::Timeout | libfrugalos::ErrorKind::Other => ErrorKind::Other,
         };
         kind.takes_over(f).into()
     }
