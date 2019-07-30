@@ -23,7 +23,7 @@ mod metrics;
 mod node;
 mod snapshot;
 
-type Reply<T> = Monitored<T, Error>;
+pub(crate) type Reply<T> = Monitored<T, Error>;
 
 /// Raftに提案中のコマンド.
 #[derive(Debug)]
@@ -197,7 +197,8 @@ enum Request {
     #[allow(dead_code)]
     DeleteByRange(ObjectVersion, ObjectVersion, Reply<Vec<ObjectSummary>>),
     DeleteByPrefix(ObjectPrefix, Reply<DeleteObjectsByPrefixSummary>),
-    Stop,
+    Exit,
+    Stop(Reply<()>),
     TakeSnapshot,
 }
 impl Request {
@@ -214,7 +215,8 @@ impl Request {
             Request::DeleteByVersion(_, tx) => tx.exit(Err(track!(e))),
             Request::DeleteByRange(_, _, tx) => tx.exit(Err(track!(e))),
             Request::DeleteByPrefix(_, tx) => tx.exit(Err(track!(e))),
-            Request::Stop | Request::TakeSnapshot | Request::StartElection => {}
+            Request::Stop(tx) => tx.exit(Err(track!(e))),
+            Request::Exit | Request::TakeSnapshot | Request::StartElection => {}
         }
     }
 }

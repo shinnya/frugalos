@@ -1,11 +1,12 @@
 use atomic_immut::AtomicImmut;
-use fibers::sync::mpsc;
+use fibers::sync::{mpsc, oneshot};
 use fibers_rpc::server::ServerBuilder as RpcServerBuilder;
 use frugalos_core::tracer::ThreadLocalTracer;
 use frugalos_raft::{LocalNodeId, NodeId};
 use futures::{Async, Future, Poll, Stream};
 use slog::Logger;
 use std::collections::HashMap;
+use std::mem;
 use std::sync::Arc;
 
 use node::NodeHandle;
@@ -26,6 +27,7 @@ pub struct Service {
     command_tx: mpsc::Sender<Command>,
     command_rx: mpsc::Receiver<Command>,
     do_stop: bool,
+    stopping: Option<futures::SelectAll<oneshot::Monitor<(), Error>>>,
 }
 impl Service {
     /// 新しい`Service`インスタンスを生成する.
@@ -42,6 +44,7 @@ impl Service {
             command_tx,
             command_rx,
             do_stop: false,
+            stopping: None,
         };
         Server::register(this.handle(), rpc, tracer);
         Ok(this)
@@ -60,10 +63,14 @@ impl Service {
     /// サービス停止前には、全てのローカルノードでスナップショットが取得される.
     pub fn stop(&mut self) {
         self.do_stop = true;
+        let mut stopping = Vec::new();
         for (id, node) in self.nodes.load().iter() {
             info!(self.logger, "Sends stop request: {:?}", id);
-            node.stop();
+            let (monitored, monitor) = oneshot::monitor();
+            stopping.push(monitor);
+            node.stop(monitored);
         }
+        self.stopping = Some(futures::select_all(stopping));
     }
 
     /// スナップショットを取得する.
@@ -72,6 +79,13 @@ impl Service {
         for (id, node) in self.nodes.load().iter() {
             info!(self.logger, "Sends taking snapshot request: {:?}", id);
             node.take_snapshot();
+        }
+    }
+
+    fn exit(&mut self) {
+        for (id, node) in self.nodes.load().iter() {
+            info!(self.logger, "Sends exit request: {:?}", id);
+            node.exit();
         }
     }
 
@@ -107,6 +121,32 @@ impl Future for Service {
     type Error = Error;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
         loop {
+            loop {
+                match mem::replace(&mut self.stopping, None) {
+                    None => break,
+                    Some(mut future) => {
+                        let remainings = match future.poll() {
+                            Err((e, _, remainings)) => {
+                                warn!(self.logger, "{:?}", e);
+                                remainings
+                            }
+                            Ok(Async::Ready(((), _, remainings))) => {
+                                info!(self.logger, "remaing: {}", remainings.len());
+                                remainings
+                            }
+                            Ok(Async::NotReady) => {
+                                self.stopping = Some(future);
+                                break;
+                            }
+                        };
+                        if remainings.is_empty() {
+                            self.exit();
+                            break;
+                        }
+                        self.stopping = Some(futures::select_all(remainings));
+                    }
+                }
+            }
             let polled = self.command_rx.poll().expect("Never fails");
             if let Async::Ready(command) = polled {
                 let command = command.expect("Unreachable");
