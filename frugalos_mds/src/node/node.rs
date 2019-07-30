@@ -508,6 +508,7 @@ impl Node {
                         }
                         Ok(true) => {
                             self.phase = Phase::Stopping;
+                            self.stopping = Some(Stopping(self.service.clone()));
                         }
                     }
                 }
