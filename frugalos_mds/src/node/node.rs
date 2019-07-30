@@ -160,28 +160,18 @@ impl LeaderWaiting {
 }
 
 #[derive(Debug)]
+struct Stopping(ServiceHandle);
+impl Drop for Stopping {
+    fn drop(&mut self) {
+        let _ = self.0.notify_snapshot_taken();
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
 enum Phase {
     Running,
-    Stopping(ServiceHandle),
+    Stopping,
     Stopped,
-}
-impl PartialEq for Phase {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Phase::Running, Phase::Running) => true,
-            (Phase::Stopped, Phase::Stopped) => true,
-            (Phase::Stopping(_), Phase::Stopping(_)) => true,
-            _ => false,
-        }
-    }
-}
-impl Eq for Phase {}
-impl Drop for Phase {
-    fn drop(&mut self) {
-        if let Phase::Stopping(service) = self {
-            let _ = service.notify_snapshot_taken();
-        }
-    }
 }
 
 /// MDSのクラスタを形成する個々のノード.
@@ -214,6 +204,7 @@ pub struct Node {
     polling_timer: timer::Timeout,
     polling_timer_interval: Duration,
     phase: Phase,
+    stopping: Option<Stopping>,
     rpc_service: RpcServiceHandle,
 
     // 整合性保証のレベルを変更するための変数群
@@ -303,6 +294,7 @@ impl Node {
             polling_timer: timer::timeout(config.node_polling_interval),
             polling_timer_interval: config.node_polling_interval,
             phase: Phase::Running,
+            stopping: None,
             large_queue_rounds: 0,
             large_queue_threshold,
             reelection_threshold,
@@ -320,6 +312,7 @@ impl Node {
         // TODO: リースないしハートビートを使って、leaderであることを保証する (READ時)
         match request {
             Request::GetLeader(_, _)
+            | Request::Exit
             | Request::Stop
             | Request::Get(_, _, _, _, _)
             | Request::Head(_, _, _, _)
@@ -514,7 +507,7 @@ impl Node {
                             self.phase = Phase::Stopped;
                         }
                         Ok(true) => {
-                            self.phase = Phase::Stopping(self.service.clone());
+                            self.phase = Phase::Stopping;
                         }
                     }
                 }
@@ -525,7 +518,7 @@ impl Node {
                 }
             }
             Request::Exit => {
-                if let Phase::Stopping(_) = self.phase {
+                if self.phase == Phase::Stopping {
                     self.phase = Phase::Stopped;
                 }
             }
@@ -642,6 +635,9 @@ impl Node {
                     self.logger,
                     "New snapshot is installed: new_head={:?}, phase={:?}", new_head, self.phase
                 );
+                if self.phase == Phase::Stopping {
+                    self.stopping = None;
+                }
             }
         }
         Ok(())
