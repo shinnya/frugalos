@@ -10,7 +10,7 @@ use futures::{Async, Future, Poll, Stream};
 use libfrugalos::consistency::ReadConsistency;
 use libfrugalos::entity::object::{Metadata, ObjectVersion};
 use prometrics::metrics::{
-    Counter, CounterBuilder, Gauge, GaugeBuilder, Histogram, HistogramBuilder,
+    Counter, CounterBuilder, Gauge, GaugeBuilder, Histogram, HistogramBuilder, MetricBuilder,
 };
 use raftlog::cluster::{ClusterConfig, ClusterMembers};
 use raftlog::election::Role;
@@ -19,13 +19,14 @@ use raftlog::{self, ReplicatedLog};
 use slog::Logger;
 use std::collections::VecDeque;
 use std::env;
+use std::mem;
 use std::ops::Range;
 use std::time::{Duration, Instant};
 use trackable::error::ErrorKindExt;
 
 use super::metrics::make_histogram;
 use super::snapshot::SnapshotThreshold;
-use super::{Event, NodeHandle, Proposal, ProposalMetrics, Request, Seconds};
+use super::{Event, NodeHandle, Proposal, ProposalMetrics, Reply, Request, Seconds};
 use codec;
 use config::FrugalosMdsConfig;
 use machine::{Command, Machine};
@@ -159,6 +160,22 @@ impl LeaderWaiting {
     }
 }
 
+// `Drop` 時にリプライすることで異常終了時でも停止処理が完了することを保証する.
+#[derive(Debug)]
+struct Stopping(Option<Reply<()>>);
+impl Stopping {
+    fn new(reply: Reply<()>) -> Self {
+        Self(Some(reply))
+    }
+}
+impl Drop for Stopping {
+    fn drop(&mut self) {
+        if let Some(monitored) = mem::replace(&mut self.0, None) {
+            monitored.exit(Ok(()));
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum Phase {
     Running,
@@ -196,6 +213,8 @@ pub struct Node {
     polling_timer: timer::Timeout,
     polling_timer_interval: Duration,
     phase: Phase,
+    // `Request::Stop` を受け取り、かつ、スナップショットの取得を開始した時にだけ `Some` になる.
+    stopping: Option<Stopping>,
     rpc_service: RpcServiceHandle,
 
     // 整合性保証のレベルを変更するための変数群
@@ -224,7 +243,13 @@ impl Node {
         let node_handle = NodeHandle::new(request_tx.clone());
         track!(service.add_node(node_id, node_handle))?;
 
-        let rlog = ReplicatedLog::new(node_id.to_raft_node_id(), cluster, io);
+        let metric_builder = MetricBuilder::new();
+        let rlog = track!(ReplicatedLog::new(
+            node_id.to_raft_node_id(),
+            cluster,
+            io,
+            &metric_builder
+        ))?;
 
         // For backward compatibility
         let snapshot_threshold = config.snapshot_threshold();
@@ -285,6 +310,7 @@ impl Node {
             polling_timer: timer::timeout(config.node_polling_interval),
             polling_timer_interval: config.node_polling_interval,
             phase: Phase::Running,
+            stopping: None,
             large_queue_rounds: 0,
             large_queue_threshold,
             reelection_threshold,
@@ -296,13 +322,19 @@ impl Node {
         })
     }
 
+    /// Returns next_commit.
+    pub fn get_next_commit(&self) -> LogIndex {
+        self.next_commit
+    }
+
     fn handle_request(&mut self, request: Request) {
         // NOTE: 整合性を保証したいので、更新系の要求を処理できるのはリーダのみとする.
         //       Get と Head はクライアントが指定した整合性に従う.
         // TODO: リースないしハートビートを使って、leaderであることを保証する (READ時)
         match request {
             Request::GetLeader(_, _)
-            | Request::Stop
+            | Request::Exit
+            | Request::Stop(_)
             | Request::Get(_, _, _, _, _)
             | Request::Head(_, _, _, _)
             | Request::TakeSnapshot
@@ -482,21 +514,26 @@ impl Node {
                     }
                 }
             }
-            Request::Stop => {
+            Request::Stop(monitored) => {
                 if self.phase == Phase::Running {
                     info!(self.logger, "Starts stopping the node");
+                    // スナップショットを取得しない場合は停止準備を完了したことを即座に通知する.
                     match track!(self.take_snapshot()) {
                         Err(e) => {
                             error!(self.logger, "Cannot take snapshot: {}", e);
 
                             // スナップショットが取得できないなら即座に終了
                             self.phase = Phase::Stopped;
+                            monitored.exit(Ok(()));
                         }
                         Ok(false) => {
                             self.phase = Phase::Stopped;
+                            warn!(self.logger, "no take snapshot");
+                            monitored.exit(Ok(()));
                         }
                         Ok(true) => {
                             self.phase = Phase::Stopping;
+                            self.stopping = Some(Stopping::new(monitored));
                         }
                     }
                 }
@@ -504,6 +541,12 @@ impl Node {
             Request::TakeSnapshot => {
                 if let Err(e) = track!(self.take_snapshot()) {
                     error!(self.logger, "Cannot take snapshot: {}", e);
+                }
+            }
+            Request::Exit => {
+                if self.phase == Phase::Stopping {
+                    info!(self.logger, "Exit: node={:?}", self.node_id);
+                    self.phase = Phase::Stopped;
                 }
             }
         }
@@ -619,8 +662,10 @@ impl Node {
                     self.logger,
                     "New snapshot is installed: new_head={:?}, phase={:?}", new_head, self.phase
                 );
-                if self.phase == Phase::Stopping {
-                    self.phase = Phase::Stopped;
+                // ここでこのノードの停止準備が完了したことが `Service` に通知される.
+                if let Some(_) = self.stopping {
+                    info!(self.logger, "Drop stopping");
+                    self.stopping = None;
                 }
             }
         }
@@ -932,6 +977,7 @@ impl Stream for Node {
             }
             return Ok(Async::Ready(Some(event)));
         }
+
         Ok(Async::NotReady)
     }
 }
