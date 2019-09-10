@@ -38,17 +38,18 @@ curl http://frugalos01/v1/buckets
 # Puts objects
 #
 it/scripts/gen_put_requests.sh frugalos03 live_archive_chunk 1 1000 $WORK_DIR/req.json
-sleep 10
+sleep 5
 hb run -i $WORK_DIR/req.json | hb summary
-sleep 10
+sleep 5
 hb run -i $WORK_DIR/req.json | hb summary
 
 #
 # GET => DELETE => GET
 #
-docker-compose -f it/clusters/${CLUSTER}.yml stop frugalos03
-sleep 10
-docker-compose -f it/clusters/${CLUSTER}.yml start frugalos03
+docker-compose -f it/clusters/${CLUSTER}.yml stop frugalos02
+it/scripts/http_requests.sh GET 200 $WORK_DIR/req.json $WORK_DIR/res.json 1000 "?consistency=subset&subset=2"
+sleep 5
+docker-compose -f it/clusters/${CLUSTER}.yml start frugalos02
 curl -f http://frugalos01/v1/frugalos/configurations
 it/scripts/http_requests.sh GET 200 $WORK_DIR/req.json $WORK_DIR/res.json
 
