@@ -216,6 +216,25 @@ pub enum Snapshot {
     Patricia(PatriciaMap<ObjectVersion>),
 }
 
+#[derive(Debug, Clone, Default)]
+pub enum Versioning {
+    /// 無効
+    Disabled,
+    /// N 世代管理
+    Generation(u8),
+}
+impl Versioning {
+    /// バージョニングが有効であれば true を返す。
+    pub fn is_enabled(&self) -> bool {
+        self != Versioning::Disabled
+    }
+}
+impl Default for Versioning {
+    fn default() -> Self {
+        Versioning::Disabled
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
