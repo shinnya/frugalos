@@ -635,12 +635,19 @@ impl Node {
                 self.leader = None;
             }
             E::Committed { index, entry } => track!(self.handle_committed(index, entry))?,
-            E::SnapshotLoaded { new_head, snapshot } => {
+            E::SnapshotLoaded { new_head, snapshot, voted_for, } => {
+                let new_leader = if let Some(voted_for) = voted_for {
+                    Some(track!(NodeId::from_raft_node_id(&voted_for))?)
+                } else {
+                    None
+                };
                 info!(
                     self.logger,
-                    "New snapshot is loaded: new_head={:?}, bytes={}",
+                    "New snapshot is loaded: new_head={:?}, bytes={}, old_leader={:?}, new_leader={:?}",
                     new_head,
-                    snapshot.len()
+                    snapshot.len(),
+                    self.leader,
+                    new_leader,
                 );
                 let logger = self.logger.clone();
                 let started_at = Instant::now();
@@ -653,6 +660,7 @@ impl Node {
                     metrics.snapshot_decoding_duration_seconds.observe(elapsed);
                     Ok((new_head, machine, versions))
                 });
+                self.leader = new_leader;
                 self.decoding_snapshot = Some(future);
             }
             E::SnapshotInstalled { new_head } => {
@@ -903,6 +911,14 @@ impl Stream for Node {
                 self.staled_object_rounds = 0;
             } else {
                 self.staled_object_rounds += 1;
+            }
+            if self.staled_object_rounds > self.staled_object_threshold && self.staled_object_rounds % 10 == 0 {
+                warn!(
+                    self.logger,
+                    "Leader is staled: interval={:?}, rounds={}",
+                    self.polling_timer_interval,
+                    self.staled_object_rounds,
+                );
             }
         }
 

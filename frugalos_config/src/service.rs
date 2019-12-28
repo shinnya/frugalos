@@ -139,7 +139,8 @@ impl Service {
                     track!(protobuf::command_decoder().decode_from_bytes(&command); command)?;
                 track!(self.handle_command(proposal_id, command))?;
             }
-            raftlog::Event::SnapshotLoaded { new_head, snapshot } => {
+            raftlog::Event::SnapshotLoaded { new_head, snapshot, .. } => {
+                // TODO voted_for
                 info!(
                     self.logger,
                     "Snapshot loaded: {}",
