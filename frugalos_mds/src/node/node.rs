@@ -904,6 +904,15 @@ impl Stream for Node {
             } else {
                 self.staled_object_rounds += 1;
             }
+
+            if self.staled_object_rounds > self.staled_object_threshold && self.staled_object_rounds % 10 == 0 {
+                warn!(
+                    self.logger,
+                    "Leader is staled: interval={:?}, rounds={}",
+                    self.polling_timer_interval,
+                    self.staled_object_rounds,
+                );
+            }
         }
 
         match track!(self.decoding_snapshot.poll().map_err(Error::from))? {
