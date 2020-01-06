@@ -90,17 +90,17 @@ impl Server {
     }
 }
 impl HandleCast<rpc::RecommendToLeaderRpc> for Server {
-    fn handle_cast(&self, node_id: String) -> NoReply {
+    fn handle_cast(&self, request: rpc::RecommendToLeaderRequest) -> NoReply {
         // FIXME: log errors
-        let node_id = rpc_cast_try!(node_id.parse());
+        let node_id = rpc_cast_try!(request.node_id.parse().map_err(Error::from));
         let node = rpc_cast_try!(self.get_node(node_id));
         node.start_reelection();
         NoReply::done()
     }
 }
 impl HandleCall<rpc::GetLeaderRpc> for Server {
-    fn handle_call(&self, node_id: String) -> Reply<rpc::GetLeaderRpc> {
-        let node_id = rpc_try!(node_id.parse().map_err(Error::from));
+    fn handle_call(&self, request: rpc::GetLeaderRequest) -> Reply<rpc::GetLeaderRpc> {
+        let node_id = rpc_try!(request.node_id.parse().map_err(Error::from));
         let node = rpc_try!(self.get_node(node_id));
         let mut span = self.start_span("mds_get_leader_rpc");
         span.set_tag(|| Tag::new("node_id", node_id.to_string()));
@@ -121,8 +121,11 @@ impl HandleCall<rpc::ListObjectsRpc> for Server {
 }
 
 impl HandleCall<rpc::GetLatestVersionRpc> for Server {
-    fn handle_call(&self, node_id: String) -> Reply<rpc::GetLatestVersionRpc> {
-        let node_id = rpc_try!(node_id.parse().map_err(Error::from));
+    fn handle_call(
+        &self,
+        request: rpc::GetLatestVersionRequest,
+    ) -> Reply<rpc::GetLatestVersionRpc> {
+        let node_id = rpc_try!(request.node_id.parse().map_err(Error::from));
         let node = rpc_try!(self.get_node(node_id));
         Reply::future(node.latest_version().map_err(to_rpc_error).then(Ok))
     }
