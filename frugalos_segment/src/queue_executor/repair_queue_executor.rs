@@ -1,4 +1,5 @@
 use cannyls::device::DeviceHandle;
+use fibers::time::timer;
 use frugalos_raft::NodeId;
 use futures::{Async, Future, Poll};
 use libfrugalos::entity::object::ObjectVersion;
@@ -7,7 +8,7 @@ use prometrics::metrics::{Counter, MetricBuilder};
 use slog::Logger;
 use std::collections::BTreeSet;
 use std::convert::Infallible;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use client::storage::StorageClient;
 use repair::{RepairContent, RepairMetrics};
@@ -53,6 +54,9 @@ pub(crate) struct RepairQueueExecutor {
     repair_metrics: RepairMetrics,
     enqueued_repair: Counter,
     dequeued_repair: Counter,
+    repaired: usize,
+    logging_timeout: u64,
+    logging_timer: Option<timer::Timeout>,
 }
 impl RepairQueueExecutor {
     #[allow(clippy::too_many_arguments)]
@@ -79,6 +83,9 @@ impl RepairQueueExecutor {
             repair_metrics: RepairMetrics::new(metric_builder),
             enqueued_repair: enqueued_repair.clone(),
             dequeued_repair: dequeued_repair.clone(),
+            repaired: 0,
+            logging_timeout: 10,
+            logging_timer: Some(timer::timeout(Duration::from_secs(10)))
         }
     }
     /// Pushes an element into this queue.
@@ -118,6 +125,12 @@ impl Future for RepairQueueExecutor {
         if !self.task.is_sleeping() {
             self.last_not_idle = Instant::now();
             debug!(self.logger, "last_not_idle = {:?}", self.last_not_idle);
+        }
+
+        if self.logging_timer.poll().unwrap().is_ready() {
+            info!(self.logger, "{} fragments repaired / {}sec", self.repaired, self.logging_timeout);
+            self.repaired = 0;
+            self.logging_timer = Some(timer::timeout(Duration::from_secs(self.logging_timeout)));
         }
 
         while let Async::Ready(()) = self.task.poll().unwrap_or_else(|e| {
