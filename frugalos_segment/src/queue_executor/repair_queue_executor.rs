@@ -1,4 +1,5 @@
 use cannyls::device::DeviceHandle;
+use fibers::time::timer;
 use frugalos_raft::NodeId;
 use futures::{Async, Future, Poll};
 use libfrugalos::entity::object::ObjectVersion;
@@ -7,7 +8,7 @@ use prometrics::metrics::{Counter, MetricBuilder};
 use slog::Logger;
 use std::collections::BTreeSet;
 use std::convert::Infallible;
-use std::time::Instant;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use client::storage::StorageClient;
 use repair::{RepairContent, RepairMetrics};
@@ -53,6 +54,9 @@ pub(crate) struct RepairQueueExecutor {
     repair_metrics: RepairMetrics,
     enqueued_repair: Counter,
     dequeued_repair: Counter,
+    polling_timer: timer::Timeout,
+    log_statistics: bool,
+    repaired_count_per_interval: u64,
 }
 impl RepairQueueExecutor {
     #[allow(clippy::too_many_arguments)]
@@ -79,6 +83,9 @@ impl RepairQueueExecutor {
             repair_metrics: RepairMetrics::new(metric_builder),
             enqueued_repair: enqueued_repair.clone(),
             dequeued_repair: dequeued_repair.clone(),
+            polling_timer: timer::timeout(Duration::from_secs(1)), // TODO configurable
+            log_statistics: true, // TODO configurable
+            repaired_count_per_interval: 0,
         }
     }
     /// Pushes an element into this queue.
@@ -115,6 +122,22 @@ impl Future for RepairQueueExecutor {
     type Item = Infallible; // This executor will never finish normally.
     type Error = Infallible;
     fn poll(&mut self) -> Poll<Self::Item, Self::Error> {
+        while self.polling_timer.poll().unwrap_or_else(|e| panic!("{}", e)).is_ready() {
+            if self.log_statistics {
+                // UNIX_TIMESTAMP REPAIR_RATE
+                // gnuplot -e 'set terminal dumb 100 30; set xdata time; set timefmt "%s"; plot "<cat" using 1:2 with line;'
+                info!(
+                    self.logger,
+                    "ts:{}\tnode_id:{}\tcount:{}",
+                    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
+                    self.node_id.local_id.to_string(),
+                    self.repaired_count_per_interval,
+                );
+            }
+            self.polling_timer = timer::timeout(Duration::from_secs(1));
+            self.repaired_count_per_interval = 0;
+        }
+
         if !self.task.is_sleeping() {
             self.last_not_idle = Instant::now();
             debug!(self.logger, "last_not_idle = {:?}", self.last_not_idle);
@@ -125,6 +148,9 @@ impl Future for RepairQueueExecutor {
             warn!(self.logger, "Task failure in RepairQueueExecutor: {}", e);
             Async::Ready(())
         }) {
+            if let Task::Repair { .. } = self.task {
+                self.repaired_count_per_interval += 1;
+            }
             self.task = Task::Idle;
             if let RepairIdleness::Threshold(repair_idleness_threshold_duration) =
                 self.repair_idleness_threshold
