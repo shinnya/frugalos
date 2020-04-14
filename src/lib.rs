@@ -39,6 +39,7 @@ extern crate clap;
 extern crate sloggers;
 
 use fibers_http_server::metrics::BucketConfig;
+use frugalos_core::prometheus::PrometheusConfig;
 use std::fs::File;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -114,6 +115,9 @@ pub struct FrugalosConfig {
     /// fibers_http_server 向けの設定。
     #[serde(default)]
     pub fibers_http_server: FibersHttpServerConfig,
+    /// prometheus 向けの設定。
+    #[serde(default)]
+    pub prometheus: PrometheusConfig,
 }
 
 impl FrugalosConfig {
@@ -148,6 +152,7 @@ impl Default for FrugalosConfig {
             mds: Default::default(),
             segment: Default::default(),
             fibers_http_server: Default::default(),
+            prometheus: Default::default(),
         }
     }
 }
@@ -296,6 +301,12 @@ frugalos:
   log_file: ~
   loglevel: critical
   max_concurrent_logs: 30
+  prometheus:
+    metrics:
+      - name: request_duration_seconds
+        bucket:
+          - 1.0
+          - 5.0
   fibers_http_server:
     request_duration_bucket_config:
       - 1.5
@@ -383,6 +394,8 @@ frugalos:
             timeout: Duration::from_secs(3),
         };
         expected.segment.mds_client.put_content_timeout = Seconds(32);
+        expected.prometheus =
+            PrometheusConfig::new().declare_histogram("request_duration_seconds", vec![1.0, 5.0]);
 
         assert_eq!(expected, actual);
 
