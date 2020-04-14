@@ -26,6 +26,40 @@ pub struct MetricsOption {
     #[serde(default)]
     bucket: HistogramBucket,
 }
+impl MetricsOption {
+    pub fn set_bucket(&self, builder: &mut HistogramBuilder) {
+        for n in self.bucket.0.iter() {
+            builder.bucket(*n);
+        }
+    }
+}
+
+trait MetricsBuilderExt {
+    fn bucket_or<I, F>(mut self, bucket: Option<HistogramBucket>, default: F) -> Self
+        where
+            F: Fn() -> HistogramBucket;
+}
+impl Configure for HistogramBuilder {
+    fn bucket_or<I, F>(mut self, bucket: Option<HistogramBucket>, default: F) -> Self
+        where
+            F: Fn() -> HistogramBucket {
+        let bucket = if let Some(bucket) = bucket { bucket } else { default() };
+        for n in bucket.0.iter() {
+            self.bucket(*n);
+        }
+    }
+}
+
+pub struct HistogramBucketBuilder(HistogramBuilder);
+impl HistogramBucketBuilder {
+    pub fn bucket<I: Iterator<Item = f64>>(mut self, bucket: I) -> Self {
+        bucket.for_each(|n| self.0.bucket(*n));
+        self
+    }
+    pub fn finish(self) -> HistogramBuilder {
+        self.0
+    }
+}
 
 /// Prometheus のメトリクス設定群を表現する。
 ///
@@ -49,19 +83,11 @@ pub struct PrometheusConfig {
     metrics: Vec<MetricsOption>,
 }
 impl PrometheusConfig {
-    /// ヒストグラム用の設定を適用する。
-    pub fn configure_histogram<F>(&self, name: &str, f: F) -> HistogramBuilder
-    where
-        F: Fn(&mut HistogramBuilder) -> &mut HistogramBuilder,
-    {
-        let mut builder = HistogramBuilder::new(name);
-        let _ = f(&mut builder);
-        if let Some(opts) = self.metrics.iter().find(|opts| opts.name == name) {
-            for n in opts.bucket.0.iter() {
-                builder.bucket(*n);
-            }
-        }
-        builder
+    /// 設定で指定された設定を適用した上で `HistogramBuilder` を返す。
+    ///
+    /// 設定に対応するメトリクス名が定義されていない場合は何もしない。
+    pub fn histogram(&self, name: &'static str) -> Option<&MetricsOption> {
+        self.metrics.get(name)
     }
 
     /// `PrometheusConfig` を生成して返す。
@@ -84,6 +110,7 @@ impl PrometheusConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prometrics::metric::MetricKind::Histogram;
 
     #[test]
     fn it_works() {
@@ -108,7 +135,9 @@ metrics:
     fn configure_histogram_works() {
         let metric_name = "request_duration_seconds";
         let config = PrometheusConfig::new().declare_histogram(metric_name, vec![0.5, 1.0]);
-        let histogram = config
+        let histogram = HistogramBuilder::new()
+            .
+        config
             .configure_histogram(metric_name, |builder: &mut _| builder.namespace("frugalos"))
             .finish()
             .unwrap();

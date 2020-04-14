@@ -235,10 +235,10 @@ impl Default for FrugalosRpcClientConfig {
 /// fibers_http_server の設定。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct FibersHttpServerConfig {
-    request_duration_bucket_config: HttpRequestDurationHistogramBucketConfig,
+    request_duration_bucket_config: HttpRequestDurationBucketConfig,
 }
 
-/// histogram メトリクスにおける、バケツの upper_bound の設定。単調増加である必要がある。
+///  メトリクスにおける、バケツの upper_bound の設定。単調増加である必要がある。
 ///
 /// 設定がない場合は fibers_http_server のデフォルト値が使われる。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
