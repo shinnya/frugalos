@@ -32,6 +32,14 @@ pub struct FrugalosMdsConfig {
     #[serde(default = "default_leader_waiting_timeout_threshold")]
     pub leader_waiting_timeout_threshold: usize,
 
+    /// true なら接頭辞削除リクエストで追加のログ出力をする。
+    ///
+    /// ログ出力数を減らすため、デフォルトはログ出力しない
+    #[serde(
+        default = "default_log_object_prefix_delete",
+    )]
+    pub log_object_prefix_delete: bool,
+
     /// true ならリーダー不在状況でログを出す。
     #[serde(default = "default_log_leader_absence")]
     pub log_leader_absence: bool,
@@ -92,6 +100,7 @@ impl Default for FrugalosMdsConfig {
             leader_waiting_timeout_threshold: default_leader_waiting_timeout_threshold(),
             log_leader_absence: default_log_leader_absence(),
             log_leader_absence_threshold: default_log_leader_absence_threshold(),
+            log_object_prefix_delete: default_log_object_prefix_delete(),
             node_polling_interval: default_node_polling_interval(),
             reelection_threshold: default_reelection_threshold(),
             snapshot_threshold_min: default_snapshot_threshold_min(),
@@ -115,6 +124,10 @@ fn default_large_leader_waiting_queue_threshold() -> usize {
 
 fn default_leader_waiting_timeout_threshold() -> usize {
     10
+}
+
+fn default_log_object_prefix_delete() -> bool {
+    false
 }
 
 fn default_log_leader_absence() -> bool {

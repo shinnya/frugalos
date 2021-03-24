@@ -222,6 +222,8 @@ pub struct Node {
 
     log_leader_absence_timeout: Option<CountDownTimeout>,
 
+    log_object_prefix_delete: bool,
+
     // 整合性保証のレベルを変更するための変数群
     // リーダーが決定した場合に `rounds` はリセットされる。
     staled_object_threshold: usize,
@@ -326,6 +328,7 @@ impl Node {
             phase: Phase::Running,
             stopping: None,
             log_leader_absence_timeout,
+            log_object_prefix_delete: config.log_object_prefix_delete,
             large_queue_rounds: 0,
             large_queue_threshold,
             reelection_threshold,
@@ -849,7 +852,21 @@ impl Node {
                 );
             }
             Command::DeleteByPrefix { prefix } => {
+                let before_machine_length = self.machine.len();
                 let deleted = track!(self.machine.delete_by_prefix(&prefix))?;
+                let after_machine_length = self.machine.len();
+
+                // ログ出力数を制御するため必要な場合だけログ出力する対応。
+                // slog でログレベルを実行時に指定することはできなかった。
+                if self.log_object_prefix_delete {
+                    info!(
+                        self.logger,
+                        "before.len={:?}, after.len={:?}, deleted.len={:?}",
+                        before_machine_length,
+                        after_machine_length,
+                        deleted.len(),
+                    );
+                }
 
                 deleted
                     .iter()
